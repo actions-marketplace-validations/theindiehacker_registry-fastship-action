@@ -2,16 +2,15 @@ name: "✔️ テスト"
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
   push:
     branches: [main]
 
 permissions: {}
 
-# 同じ PR・ブランチに新しい push があれば、古い run をキャンセルする
+# 同じ PR に新しい push があれば、古い run をキャンセルする (main は、コミットごとの結果を残すためキャンセルしない)
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

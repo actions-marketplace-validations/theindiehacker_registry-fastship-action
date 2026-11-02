@@ -22,13 +22,20 @@ runs:
           exit 1
         fi
 
-        # リクエスト用のトークンをコマンドの引数に出さないよう、ヘッダーを標準入力で渡す
-        response=$(curl -sSf --retry 3 -H @- "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https%3A%2F%2Fregistry.fastship.jp" \
-          <<< "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}")
+        # リクエスト用のトークンは、コマンドの引数にもディスクにも出さないよう、パイプでヘッダーを渡す
+        # (printf は builtin のため argv に出ない。here-string は bash の版によって一時ファイルに書かれる)
+        # 発行元が応答しないときに job の timeout まで止まらないよう、時間を区切る
+        # shell: bash は -e で動くため、失敗は if で受けて、案内付きのエラーにする
+        if ! response=$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" |
+          curl -sSf --retry 3 --connect-timeout 10 --max-time 30 -H @- \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https%3A%2F%2Fregistry.fastship.jp"); then
+          echo "::error::GitHub から ID トークンを取得できませんでした。時間をおいて再実行してください"
+          exit 1
+        fi
         # 応答は {"count":…,"value":"<JWT>"}。jq の無いランナーでも動くよう、sed で取り出す (JWT に " は入らない)
-        token=$(sed -n 's/.*"value" *: *"\([^"]*\)".*/\1/p' <<< "$response")
+        token=$(printf '%s' "$response" | sed -n 's/.*"value" *: *"\([^"]*\)".*/\1/p')
         if [ -z "$token" ]; then
-          echo "::error::ID トークンを取得できませんでした"
+          echo "::error::GitHub の応答に ID トークンがありませんでした"
           exit 1
         fi
 
