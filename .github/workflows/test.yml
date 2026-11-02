@@ -1,0 +1,51 @@
+name: "✔️ テスト"
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+# 同じ PR に新しい push があれば、古い run をキャンセルする (main は、コミットごとの結果を残すためキャンセルしない)
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: "トークンを取得できる (${{ matrix.os }})"
+    # fork からの PR では ID トークンを取得できないため動かさない
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write  # この Action が取得する ID トークン
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # self-repository の形 ($/) は、actionlint・ghalint がまだ読めないため、./ にする
+      - name: "registry.fastship.jp のトークンを取得"
+        id: registry
+        uses: ./
+
+      # トークンそのものは出さず、audience と発行元だけを確かめる
+      - name: "audience と発行元を確かめる"
+        shell: bash
+        env:
+          TOKEN: ${{ steps.registry.outputs.token }}
+        run: |
+          payload=$(cut -d. -f2 <<< "$TOKEN" | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          claims=$(base64 -d <<< "$payload")
+          test "$(jq -r .aud <<< "$claims")" = "https://registry.fastship.jp"
+          test "$(jq -r .iss <<< "$claims")" = "https://token.actions.githubusercontent.com"
+          echo "OK: aud と iss が正しい"

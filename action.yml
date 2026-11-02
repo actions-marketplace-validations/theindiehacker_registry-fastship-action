@@ -1,0 +1,43 @@
+name: "registry.fastship.jp token"
+description: "registry.fastship.jp から terraform init でモジュールを取得するための、GitHub Actions の ID トークンを取得する"
+author: "Indie Hacker, Inc."
+branding:
+  icon: "lock"
+  color: "blue"
+
+outputs:
+  token:
+    description: "ID トークン (audience は https://registry.fastship.jp)。terraform init の step の env TF_TOKEN_registry_fastship_jp に渡す"
+    value: ${{ steps.token.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: "ID トークンを取得"
+      id: token
+      shell: bash
+      run: |
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "::error::ID トークンを取得できません。呼び出す job に permissions: id-token: write を付けてください (fork からの PR では取得できません)"
+          exit 1
+        fi
+
+        # リクエスト用のトークンは、コマンドの引数にもディスクにも出さないよう、パイプでヘッダーを渡す
+        # (printf は builtin のため argv に出ない。here-string は bash の版によって一時ファイルに書かれる)
+        # 発行元が応答しないときに job の timeout まで止まらないよう、時間を区切る
+        # shell: bash は -e で動くため、失敗は if で受けて、案内付きのエラーにする
+        if ! response=$(printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" |
+          curl -sSf --retry 3 --connect-timeout 10 --max-time 30 -H @- \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https%3A%2F%2Fregistry.fastship.jp"); then
+          echo "::error::GitHub から ID トークンを取得できませんでした。時間をおいて再実行してください"
+          exit 1
+        fi
+        # 応答は {"count":…,"value":"<JWT>"}。jq の無いランナーでも動くよう、sed で取り出す (JWT に " は入らない)
+        token=$(printf '%s' "$response" | sed -n 's/.*"value" *: *"\([^"]*\)".*/\1/p')
+        if [ -z "$token" ]; then
+          echo "::error::GitHub の応答に ID トークンがありませんでした"
+          exit 1
+        fi
+
+        echo "::add-mask::${token}"
+        echo "token=${token}" >> "$GITHUB_OUTPUT"
