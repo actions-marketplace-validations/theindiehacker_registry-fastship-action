@@ -1,0 +1,88 @@
+name: "📦 リリース"
+
+# Actions の画面から version: vX.Y.Z で実行すると、main の先頭にタグを付け、
+# ローカル向けの helper のバイナリと build provenance を付けた Release を作る。
+# GitHub Actions の Action は、Release のバイナリではなく、固定したコミットのソースからビルドする。
+# ワークフローの GITHUB_TOKEN で作ったタグでは、ほかのワークフローが動かないため、タグから Release までを 1 つのジョブで行う
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "リリースする版 (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions: {}
+
+# 同じ版を 2 回同時に作らない
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: "${{ inputs.version }} をリリース"
+    # main 以外のブランチからはリリースしない
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write      # タグと Release の作成
+      id-token: write      # build provenance の署名
+      attestations: write  # build provenance の保存
+    steps:
+      - name: "版を確かめる"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version は vX.Y.Z の形で指定してください: $VERSION"
+            exit 1
+          fi
+          # 一度出した版は作り直さない (利用者は SHA で固定しているため、中身を変えるときは次の版にする)
+          if gh api "repos/$GH_REPO/git/ref/tags/$VERSION" > /dev/null 2>&1; then
+            echo "::error::$VERSION のタグは既にあります。次の版を指定してください"
+            exit 1
+          fi
+
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # リリースのビルドに、キャッシュ (ほかのワークフローが書いたもの) を使わない
+      - name: "Go を入れる"
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: "ビルド"
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os=${target%/*} arch=${target#*/} ext=""
+            [ "$os" = windows ] && ext=.exe
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/terraform-credentials-fastship_${os}_${arch}${ext}" .
+          done
+          (cd dist && sha256sum terraform-credentials-fastship_* > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: "build provenance を付ける"
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: dist/terraform-credentials-fastship_*
+
+      # --target のコミット (ビルドしたもの) にタグを付け、Release をバイナリ付きで一度に作る
+      - name: "タグと Release を作る"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "$VERSION" dist/* --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+          echo "$VERSION: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
