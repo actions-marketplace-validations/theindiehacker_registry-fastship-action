@@ -7,7 +7,7 @@ Action は Terraform の [credentials helper](https://developer.hashicorp.com/te
 - 既定のホストは `registry.fastship.jp` です。ほかの会社の registry には `host` を指定します。
 - PC では、この helper ではなく `terraform login <host>` を使います ([PC から helper を消す](#-pc-から-helper-を消す))。
 - モジュールを registry に上げる reusable workflow もあります ([モジュールの upload](#-モジュールの-upload))。
-- Docker イメージを会社の Artifact Registry に push する reusable workflow もあります ([Docker イメージの publish](#-docker-イメージの-publish))。
+- Docker イメージを会社の Artifact Registry (Google Cloud) か ECR (AWS) に push する reusable workflow もあります ([Docker イメージの publish](#-docker-イメージの-publish))。
 
 ## 📖 使い方
 
@@ -34,6 +34,29 @@ module "rdb" {
   version = "1.0.0"
 }
 ```
+
+### AWS (ECR)
+
+`cloud: aws` にすると、GitHub の OIDC で push の IAM ロールを借りて、ECR に push します。上の例の `with` のうち、`repository` から下を次に替えます (呼び出し元のジョブの `permissions` は同じです)。
+
+```yaml
+    with:
+      image: ${{ matrix.image }}
+      version: ${{ inputs.version }}
+      context: .
+      file: docker/Dockerfile
+      target: ${{ matrix.target }}
+      cloud: aws
+      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
+      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+```
+
+- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
+
+### 入力と出力
 
 | 入力 | 既定 | 説明 |
 |---|---|---|
@@ -120,6 +143,29 @@ module "network" {
 }
 ```
 
+### AWS (ECR)
+
+`cloud: aws` にすると、GitHub の OIDC で push の IAM ロールを借りて、ECR に push します。上の例の `with` のうち、`repository` から下を次に替えます (呼び出し元のジョブの `permissions` は同じです)。
+
+```yaml
+    with:
+      image: ${{ matrix.image }}
+      version: ${{ inputs.version }}
+      context: .
+      file: docker/Dockerfile
+      target: ${{ matrix.target }}
+      cloud: aws
+      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
+      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+```
+
+- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
+
+### 入力と出力
+
 | 入力 | 既定 | 説明 |
 |---|---|---|
 | `host` | `registry.fastship.jp` | registry のホスト名。スキーム・ポート・パスは書きません |
@@ -144,7 +190,11 @@ module "network" {
 
 ## 🐳 Docker イメージの publish
 
-`.github/workflows/publish.yml` は、Docker イメージをビルドして、会社の Artifact Registry (registry の bootstrap が作る `apps`) に push する reusable workflow です。認証は WIF で、鍵は要りません。
+`.github/workflows/publish.yml` は、Docker イメージをビルドして、会社の Artifact Registry (Google Cloud) か ECR (AWS) に push する reusable workflow です。`cloud` で選びます (既定は `google`)。認証は GitHub の OIDC で、鍵は要りません。
+
+### Google Cloud (Artifact Registry)
+
+registry の bootstrap が作る Docker リポジトリ `apps` に push します。認証は WIF です。
 
 ```yaml
 # 呼び出し元のリポジトリの .github/workflows/publish.yml
@@ -185,6 +235,29 @@ jobs:
       service_account: ${{ vars.IMAGE_SERVICE_ACCOUNT_EMAIL }}
 ```
 
+### AWS (ECR)
+
+`cloud: aws` にすると、GitHub の OIDC で push の IAM ロールを借りて、ECR に push します。上の例の `with` のうち、`repository` から下を次に替えます (呼び出し元のジョブの `permissions` は同じです)。
+
+```yaml
+    with:
+      image: ${{ matrix.image }}
+      version: ${{ inputs.version }}
+      context: .
+      file: docker/Dockerfile
+      target: ${{ matrix.target }}
+      cloud: aws
+      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
+      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+```
+
+- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
+
+### 入力と出力
+
 | 入力 | 既定 | 説明 |
 |---|---|---|
 | `image` | (必須) | イメージの名前 (`api` など)。小文字・数字と `.` `_` `-` `/` だけ |
@@ -192,9 +265,11 @@ jobs:
 | `context` | `.` | ビルドのコンテキスト |
 | `file` | `<context>/Dockerfile` | Dockerfile のパス (リポジトリの根から) |
 | `target` | 最後のステージ | Dockerfile の target |
-| `repository` | (必須) | push 先 (`<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>`) |
-| `workload_identity_provider` | (必須) | WIF のプロバイダー |
-| `service_account` | (必須) | push の SA |
+| `cloud` | `google` | push 先のクラウド (`google` か `aws`) |
+| `repository` | (必須) | push 先。`google` は `<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>`、`aws` は `<アカウント>.dkr.ecr.<リージョン>.amazonaws.com[/<接頭辞>]` |
+| `workload_identity_provider` | (`google` で必須) | WIF のプロバイダー |
+| `service_account` | (`google` で必須) | push の SA |
+| `aws_role_arn` | (`aws` で必須) | push の IAM ロールの ARN |
 
 | 出力 | 説明 |
 |---|---|
@@ -202,11 +277,11 @@ jobs:
 | `image` | digest で指定したイメージ (`<repository>/<image>@sha256:…`)。そのまま `docker pull` できます |
 | `pushed` | push したら `true`、同じタグが既にあってスキップしたら `false` |
 
-- **設定の値**: `repository`・`workload_identity_provider`・`service_account` は、registry の bootstrap の出力 `image_publish` (`IMAGE_REPOSITORY`・`WIF_PROVIDER_NAME`・`IMAGE_SERVICE_ACCOUNT_EMAIL`) です。組織の Actions の変数 (Variables) に入れておくと、どのリポジトリからも `vars` で使えます。
-- **タグか main で指定する**: registry が push の SA を貸すのは、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブ (ID トークンの `job_workflow_ref`) だけです。SHA で指定すると `job_workflow_ref` が `@<SHA>` になり、認証で断られます。タグはリリースのワークフローだけが作り、作り直しません。
+- **設定の値 (Google Cloud)**: `repository`・`workload_identity_provider`・`service_account` は、registry の bootstrap の出力 `image_publish` (`IMAGE_REPOSITORY`・`WIF_PROVIDER_NAME`・`IMAGE_SERVICE_ACCOUNT_EMAIL`) です。組織の Actions の変数 (Variables) に入れておくと、どのリポジトリからも `vars` で使えます。
+- **タグか main で指定する**: registry が push の SA・IAM ロールを貸すのは、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブ (ID トークンの `job_workflow_ref`) だけです。SHA で指定すると `job_workflow_ref` が `@<SHA>` になり、認証で断られます。タグはリリースのワークフローだけが作り、作り直しません。
 - **やり直せる**: 同じタグが既にあれば、ビルドせずに、そのイメージの digest を出して成功します。matrix の一部が失敗したときは、同じ版でもう一度実行します。中身を変えるときは、次の版で publish します (タグは付け替えられません)。
 - **matrix の出力**: matrix のジョブの出力は 1 つにまとまるため、イメージごとの digest は、各ジョブの Summary (`docker pull <イメージ>@sha256:…`) で見ます。
-- **push できるジョブ**: 設定した組織のリポジトリなら、どのブランチから呼んでも push できます (ID トークンに、呼び出し元のデフォルトブランチを示すクレームが無いため)。版のイメージは、デフォルトブランチかタグから publish してください。自分の workflow で直接 push するジョブは、SA を借りられません。
+- **push できるジョブ (Google Cloud)**: 設定した組織のリポジトリなら、どのブランチから呼んでも push できます (ID トークンに、呼び出し元のデフォルトブランチを示すクレームが無いため)。版のイメージは、デフォルトブランチかタグから publish してください。自分の workflow で直接 push するジョブは、SA を借りられません。AWS は、上の「push できるジョブ」のとおりです。
 - **イメージ名は早い者勝ち**: イメージ名は、呼び出し元のリポジトリに結び付けません (組織の中は信頼します。モジュールの上げ方と同じです)。組織のどのリポジトリからでも、まだ無いイメージ名・タグを先に push できます。一度 push したタグは付け替えられず、ほかのリポジトリからも上書きできません。イメージ名は、リポジトリの名前を含めるなどして、ぶつからないようにしてください。
 - **イメージ**: ラベル `org.opencontainers.image.source` (リポジトリ)・`revision` (コミット)・`version` を付けます。プラットフォームは runner (`linux/amd64`) です。
 
@@ -249,7 +324,7 @@ go test ./...
 # モジュールの upload の reusable workflow (python3・jq・yq・curl が要る。偽の registry で動かす)
 bash tests/upload_test.sh
 
-# イメージの publish の reusable workflow (docker・jq・yq が要る。ローカルの registry:2 で動かす)
+# イメージの publish の reusable workflow (docker・jq・yq が要る。ローカルの registry:2 と偽の aws コマンドで動かす)
 bash tests/publish_test.sh
 ```
 
