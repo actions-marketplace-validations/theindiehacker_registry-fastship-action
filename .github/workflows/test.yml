@@ -57,8 +57,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # publish.yml の step を抜き出し、ローカルの registry (registry:2) で、入力の検査・スキップ・ビルドと push・digest を確かめる。
-      # WIF と本物の Artifact Registry への push は、ここでは確かめない
+      # publish.yml の step を抜き出し、ローカルの registry (registry:2) と偽の aws コマンドで、入力の検査 (google・aws)・ログイン・スキップ・ビルドと push・digest を確かめる。
+      # WIF・IAM ロールの借り方と、本物の Artifact Registry・ECR への push は、ここでは確かめない
       - name: "tests/publish_test.sh"
         run: bash tests/publish_test.sh
 
