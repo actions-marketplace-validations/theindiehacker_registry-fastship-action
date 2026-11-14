@@ -211,6 +211,7 @@ jobs:
           IMAGE_PATH: ${{ steps.check.outputs.path }}
           VERSION: ${{ inputs.version }}
           AUTHORIZATION: ${{ steps.login.outputs.authorization }}
+          CLOUD: ${{ inputs.cloud }}
         run: |
           headers=$(mktemp)
           # マニフェストの一覧 (index) も受け付け、push したときと同じ digest を返させる
@@ -235,6 +236,15 @@ jobs:
               { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
               ;;
             404)
+              # ECR は、イメージごとのリポジトリを registry の Terraform で作る (push のロールには作る権限が無い)。
+              # 無いリポジトリには push できないため、ビルドする前に、作り方を案内して失敗する
+              if [ "$CLOUD" = "aws" ]; then
+                body=$(curl -sS -H "Authorization: $AUTHORIZATION" "$REGISTRY_URL/v2/$IMAGE_PATH/manifests/$VERSION") || true
+                if grep -q '"NAME_UNKNOWN"' <<< "$body"; then
+                  echo "::error::ECR にリポジトリ $IMAGE_PATH がありません。registry の AWS の bootstrap の変数 app_images にイメージの名前を足して、apply してください"
+                  exit 1
+                fi
+              fi
               echo "exists=false" >> "$GITHUB_OUTPUT"
               ;;
             *)

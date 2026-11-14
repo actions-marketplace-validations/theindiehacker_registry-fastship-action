@@ -47,13 +47,13 @@ module "rdb" {
       file: docker/Dockerfile
       target: ${{ matrix.target }}
       cloud: aws
-      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
-      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
+      aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
-- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
-- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
+- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
 
 ### 入力と出力
@@ -155,13 +155,13 @@ module "network" {
       file: docker/Dockerfile
       target: ${{ matrix.target }}
       cloud: aws
-      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
-      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
+      aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
-- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
-- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
+- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
 
 ### 入力と出力
@@ -247,13 +247,13 @@ jobs:
       file: docker/Dockerfile
       target: ${{ matrix.target }}
       cloud: aws
-      repository: ${{ vars.AWS_IMAGE_REPOSITORY }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/<接頭辞>
-      aws_role_arn: ${{ vars.AWS_IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/<名前>
+      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
+      aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
-- **イメージの場所**: `<repository>/<image>` です。`repository` の接頭辞と `image` を合わせたもの (`<接頭辞>/api` など) が ECR のリポジトリの名前になります。リージョンは `repository` のホストから読みます。
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力です。組織の Actions の変数に入れておきます。
-- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチや SHA で指定すると、認証で断られます。
+- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
+- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
+- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
 
 ### 入力と出力

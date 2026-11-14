@@ -266,7 +266,8 @@ fi
 if [ "$(step_field login env.AWS_ACCESS_KEY_ID)" = '${{ steps.aws-auth.outputs.aws-access-key-id }}' ] &&
   [ "$(step_field login env.AWS_SECRET_ACCESS_KEY)" = '${{ steps.aws-auth.outputs.aws-secret-access-key }}' ] &&
   [ "$(step_field login env.AWS_SESSION_TOKEN)" = '${{ steps.aws-auth.outputs.aws-session-token }}' ] &&
-  [ "$(step_field exists env.AUTHORIZATION)" = '${{ steps.login.outputs.authorization }}' ]; then
+  [ "$(step_field exists env.AUTHORIZATION)" = '${{ steps.login.outputs.authorization }}' ] &&
+  [ "$(step_field exists env.CLOUD)" = '${{ inputs.cloud }}' ]; then
   pass "login・exists: 借りた認証情報は login にだけ渡し、exists は login の Authorization で確かめる"
 else
   fail "login・exists: env が違う: $(step_field login env) / $(step_field exists env)"
@@ -377,7 +378,19 @@ fi
 python3 -c '
 import http.server, sys
 class H(http.server.BaseHTTPRequestHandler):
+    # ECR のように、リポジトリが無ければ NAME_UNKNOWN、タグが無ければ MANIFEST_UNKNOWN を返す
+    def not_found(self, body):
+        code = "NAME_UNKNOWN" if "/missing/" in self.path else "MANIFEST_UNKNOWN"
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        if body:
+            self.wfile.write(("{\"errors\":[{\"code\":\"%s\"}]}" % code).encode())
+    def do_GET(self):
+        self.not_found(True)
     def do_HEAD(self):
+        if "/missing/" in self.path or "/notag/" in self.path:
+            return self.not_found(False)
         if self.headers.get("Authorization") == "Basic QVdTOmVjci1wYXNzd29yZA==":
             self.send_response(200)
             self.send_header("Docker-Content-Digest", "sha256:" + "a" * 64)
@@ -401,6 +414,28 @@ if run_step exists REGISTRY_URL="http://127.0.0.1:$((port + 1))" IMAGE_PATH="$im
   fail "exists: 401 なのに成功した: $(cat "$work/output")"
 else
   pass "exists: 401 なら失敗する"
+fi
+
+# ECR は、イメージごとのリポジトリを Terraform で作る (push のロールは作れない)。無ければ、ビルドする前に、作り方を案内して失敗する
+fake_url="http://127.0.0.1:$((port + 1))"
+if run_step exists REGISTRY_URL="$fake_url" IMAGE_PATH=apps/notag VERSION=v1.0.0 AUTHORIZATION="Bearer dummy" CLOUD=aws > /dev/null &&
+  [ "$(output exists)" = "false" ]; then
+  pass "exists (aws): ECR のリポジトリがあり、タグが無ければ exists=false"
+else
+  fail "exists (aws): リポジトリがあるのに exists=false にならない: $(cat "$work/output")"
+fi
+if run_step exists REGISTRY_URL="$fake_url" IMAGE_PATH=apps/missing VERSION=v1.0.0 AUTHORIZATION="Bearer dummy" CLOUD=aws > "$work/missing.log" 2>&1; then
+  fail "exists (aws): ECR のリポジトリが無いのに成功した: $(cat "$work/output")"
+elif grep -q "app_images" "$work/missing.log"; then
+  pass "exists (aws): ECR のリポジトリが無ければ、app_images に足すよう案内して失敗する"
+else
+  fail "exists (aws): ECR のリポジトリが無いときの案内が無い: $(cat "$work/missing.log")"
+fi
+if run_step exists REGISTRY_URL="$fake_url" IMAGE_PATH=apps/missing VERSION=v1.0.0 AUTHORIZATION="Bearer dummy" CLOUD=google > /dev/null &&
+  [ "$(output exists)" = "false" ]; then
+  pass "exists (google): イメージがまだ無くても exists=false (Artifact Registry は push で作る)"
+else
+  fail "exists (google): イメージがまだ無いのに exists=false にならない: $(cat "$work/output")"
 fi
 kill "$denied_server"
 
