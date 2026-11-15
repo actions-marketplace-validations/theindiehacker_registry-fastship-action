@@ -52,13 +52,13 @@ mkdir -p "$work/tmp"
 
 # ---- 入力の検査 (check) ----
 
-check_env=(HOST=registry.fastship.jp NAMESPACE=acme NAME=network SYSTEM=google VERSION=1.2.3 MODULE_PATH=modules/network)
+check_env=(HOST=registry.theindiehacker.io NAMESPACE=acme NAME=network SYSTEM=google VERSION=1.2.3 MODULE_PATH=modules/network)
 
 if run_step check "${check_env[@]}" > /dev/null; then
-  if [ "$(output host)" = "registry.fastship.jp" ] &&
+  if [ "$(output host)" = "registry.theindiehacker.io" ] &&
     [ "$(output module)" = "acme/network/google" ] &&
     [ "$(output version)" = "1.2.3" ] &&
-    [ "$(output source)" = "registry.fastship.jp/acme/network/google" ]; then
+    [ "$(output source)" = "registry.theindiehacker.io/acme/network/google" ]; then
     pass "check: 正しい入力から、ホスト・モジュール・版・source を出す"
   else
     fail "check: 出力が違う: $(cat "$work/output")"
@@ -83,9 +83,9 @@ for good in "MODULE_PATH=." "NAMESPACE=my-org_1" "NAME=a" "SYSTEM=aws" "VERSION=
 done
 
 for bad in \
-  "HOST=https://registry.fastship.jp" \
-  "HOST=registry.fastship.jp:443" \
-  "HOST=registry.fastship.jp/v1" \
+  "HOST=https://registry.theindiehacker.io" \
+  "HOST=registry.theindiehacker.io:443" \
+  "HOST=registry.theindiehacker.io/v1" \
   "HOST=localhost" \
   "HOST=" \
   "NAMESPACE=" \

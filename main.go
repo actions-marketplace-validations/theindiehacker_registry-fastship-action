@@ -1,9 +1,9 @@
-// terraform-credentials-fastship は、Private Registry (既定は registry.fastship.jp) の Terraform の credentials helper。
+// terraform-credentials-fastship は、Private Registry の Terraform の credentials helper。
 // Terraform がモジュールを取得するときに、GitHub Actions の ID トークンを、その場で取って渡す。
 // トークンは保管しない (取るたびに新しくなるため、有効期限を気にしなくてよい)。
 // PC では使わない (terraform login を使う)。
 //
-// 使い方 (Terraform が呼ぶ): terraform-credentials-fastship [--host=<registry のホスト>] get <ホスト>
+// 使い方 (Terraform が呼ぶ): terraform-credentials-fastship --host=<registry のホスト> get <ホスト>
 // プロトコル: https://developer.hashicorp.com/terraform/internals/credentials-helpers
 package main
 
@@ -22,17 +22,12 @@ import (
 	"time"
 )
 
-const (
-	// --host を指定しないときのホスト (v2.1.0 までの使い方のまま動かすため)
-	defaultHost = "registry.fastship.jp"
-
-	hostFlag = "--host="
-)
+const hostFlag = "--host="
 
 // hostPattern は、registry のホスト名 (スキーム・ポート・パスを書かない、ドットを含む名前)
 var hostPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 
-// audienceOf は、registry が受け付ける audience。v1 の Action (TF_TOKEN に渡す形) と区別するため、/v2 を付ける
+// audienceOf は、registry が受け付ける audience (/v2 を付ける)
 func audienceOf(host string) string {
 	return "https://" + host + "/v2"
 }
@@ -68,7 +63,7 @@ func defaultDeps() deps {
 
 // run は helper の本体。終了コードを返す
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, d deps) int {
-	registryHost := defaultHost
+	var registryHost string
 	var positional []string
 	for _, arg := range args {
 		switch {
@@ -85,8 +80,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, d deps) int {
 			positional = append(positional, arg)
 		}
 	}
-	if len(positional) != 2 {
-		fmt.Fprintf(stderr, "使い方: terraform-credentials-fastship [%s<registry のホスト>] get <ホスト>\n", hostFlag)
+	if registryHost == "" || len(positional) != 2 {
+		fmt.Fprintf(stderr, "使い方: terraform-credentials-fastship %s<registry のホスト> get <ホスト>\n", hostFlag)
 		return 1
 	}
 	verb, host := positional[0], positional[1]

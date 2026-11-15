@@ -9,9 +9,8 @@ on:
     inputs:
       host:
         description: "registry のホスト名 (スキーム・ポート・パスは書かない)"
-        required: false
+        required: true
         type: string
-        default: "registry.fastship.jp"
       namespace:
         description: "モジュールの namespace (英小文字・数字・- _)"
         required: true
