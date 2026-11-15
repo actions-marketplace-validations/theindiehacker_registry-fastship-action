@@ -14,6 +14,12 @@ import (
 // ID トークンの代わり。JWT の形 (ドットで区切った 3 つ) だけを真似る (本物の JWT の形にすると、シークレットの検査に掛かる)
 const jwt = "header.payload.signature"
 
+// テストの registry のホストと、helper に渡す --host
+const (
+	testHost = "registry.example.io"
+	hostArg  = "--host=" + testHost
+)
+
 // fake は、テストの環境 (環境変数)
 type fake struct {
 	env map[string]string
@@ -54,7 +60,7 @@ func tokenOf(t *testing.T, r result) string {
 
 func Testほかのホストにはトークンを渡さない(t *testing.T) {
 	f := &fake{env: map[string]string{"GITHUB_ACTIONS": "true"}}
-	r := runHelper(t, f, "", "get", "registry.terraform.io")
+	r := runHelper(t, f, "", hostArg, "get", "registry.terraform.io")
 	if r.code != 0 || strings.TrimSpace(r.stdout) != "{}" {
 		t.Fatalf("got %+v", r)
 	}
@@ -66,7 +72,7 @@ func TestGitHubActionsのIDトークンを返す(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if req.URL.Query().Get("audience") != "https://registry.fastship.jp/v2" || req.URL.Query().Get("api-version") != "2.0" {
+		if req.URL.Query().Get("audience") != "https://registry.example.io/v2" || req.URL.Query().Get("api-version") != "2.0" {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -79,7 +85,7 @@ func TestGitHubActionsのIDトークンを返す(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
 	}}
 	// Terraform はホスト名を小文字にして渡すが、大文字が混じっても同じホストとして扱う
-	if got := tokenOf(t, runHelper(t, f, "", "get", "Registry.Fastship.JP")); got != jwt {
+	if got := tokenOf(t, runHelper(t, f, "", hostArg, "get", "Registry.Example.IO")); got != jwt {
 		t.Fatalf("token = %q", got)
 	}
 }
@@ -124,8 +130,7 @@ func Testホストの大文字は小文字にそろえる(t *testing.T) {
 func Testホストを指定するとほかのホストにはトークンを渡さない(t *testing.T) {
 	var audiences []string
 	f := githubServer(t, &audiences)
-	// 既定のホスト (registry.fastship.jp) にも渡さない
-	for _, host := range []string{defaultHost, "registry.terraform.io"} {
+	for _, host := range []string{"registry.other.io", "registry.terraform.io"} {
 		r := runHelper(t, f, "", "--host=registry.example.io", "get", host)
 		if r.code != 0 || strings.TrimSpace(r.stdout) != "{}" {
 			t.Fatalf("host = %s: got %+v", host, r)
@@ -138,7 +143,7 @@ func Testホストを指定するとほかのホストにはトークンを渡�
 
 func TestGitHubActionsの外ではterraform_loginを案内する(t *testing.T) {
 	// PC・Cloud Build などでは、メタデータサーバや gcloud に頼らず、すぐに失敗する
-	r := runHelper(t, &fake{env: map[string]string{}}, "", "get", defaultHost)
+	r := runHelper(t, &fake{env: map[string]string{}}, "", hostArg, "get", testHost)
 	if r.code != 1 || !strings.Contains(r.stderr, "terraform login") {
 		t.Fatalf("got %+v", r)
 	}
@@ -160,7 +165,7 @@ func TestGitHubの一時的な失敗はやり直す(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   server.URL + "/token?api-version=2.0",
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
 	}}
-	if got := tokenOf(t, runHelper(t, f, "", "get", defaultHost)); got != jwt || calls != 3 {
+	if got := tokenOf(t, runHelper(t, f, "", hostArg, "get", testHost)); got != jwt || calls != 3 {
 		t.Fatalf("token = %q, calls = %d", got, calls)
 	}
 }
@@ -178,7 +183,7 @@ func TestGitHubが拒否したらやり直さずに失敗する(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   server.URL + "/token?api-version=2.0",
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
 	}}
-	r := runHelper(t, f, "", "get", defaultHost)
+	r := runHelper(t, f, "", hostArg, "get", testHost)
 	if r.code != 1 || calls != 1 || !strings.Contains(r.stderr, "403") || strings.Contains(r.stderr, "secret-body") {
 		t.Fatalf("got %+v, calls = %d", r, calls)
 	}
@@ -186,7 +191,7 @@ func TestGitHubが拒否したらやり直さずに失敗する(t *testing.T) {
 
 func TestGitHubActionsでidtokenの権限が無いと案内する(t *testing.T) {
 	f := &fake{env: map[string]string{"GITHUB_ACTIONS": "true"}}
-	r := runHelper(t, f, "", "get", defaultHost)
+	r := runHelper(t, f, "", hostArg, "get", testHost)
 	if r.code != 1 || !strings.Contains(r.stderr, "id-token: write") {
 		t.Fatalf("got %+v", r)
 	}
@@ -202,7 +207,7 @@ func TestGitHubの応答にトークンが無いと失敗する(t *testing.T) {
 		"ACTIONS_ID_TOKEN_REQUEST_URL":   server.URL + "/token?api-version=2.0",
 		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
 	}}
-	r := runHelper(t, f, "", "get", defaultHost)
+	r := runHelper(t, f, "", hostArg, "get", testHost)
 	if r.code != 1 || !strings.Contains(r.stderr, "ID トークンの形ではない") {
 		t.Fatalf("got %+v", r)
 	}
@@ -211,14 +216,14 @@ func TestGitHubの応答にトークンが無いと失敗する(t *testing.T) {
 func TestStoreは対応しない(t *testing.T) {
 	stdin := strings.NewReader(`{"token":"x"}`)
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"store", defaultHost}, stdin, &stdout, &stderr, (&fake{}).deps())
+	code := run([]string{hostArg, "store", testHost}, stdin, &stdout, &stderr, (&fake{}).deps())
 	if code != 1 || stdin.Len() != 0 || !strings.Contains(stderr.String(), "terraform login") {
 		t.Fatalf("code = %d, 残り = %d, stderr = %s", code, stdin.Len(), stderr.String())
 	}
 }
 
 func TestForgetは何もしない(t *testing.T) {
-	r := runHelper(t, &fake{}, "", "forget", defaultHost)
+	r := runHelper(t, &fake{}, "", hostArg, "forget", testHost)
 	if r.code != 0 || r.stdout != "" {
 		t.Fatalf("got %+v", r)
 	}
@@ -227,16 +232,21 @@ func TestForgetは何もしない(t *testing.T) {
 func Test引数が違うと失敗する(t *testing.T) {
 	for _, args := range [][]string{
 		{},
+		{hostArg, "get"},
 		{"get"},
-		{"list", defaultHost},
-		{"--unknown", "get", defaultHost},
-		{"--host=", "get", defaultHost},
+		{hostArg, "list", testHost},
+		{hostArg, "--unknown", "get", testHost},
+		{"--host=", "get", testHost},
+		// --host は必須
+		{"get", testHost},
+		{"store", testHost},
+		{"forget", testHost},
 		{"--host=https://registry.example.io", "get", "registry.example.io"},
 		{"--host=registry.example.io/v2", "get", "registry.example.io"},
 		{"--host=registry.example.io:443", "get", "registry.example.io"},
 		{"--host=registry", "get", "registry"},
 		// Google の SA のなりすましは無くした (PC では terraform login を使う)
-		{"--impersonate-service-account=tf@acme.iam.gserviceaccount.com", "get", defaultHost},
+		{hostArg, "--impersonate-service-account=tf@acme.iam.gserviceaccount.com", "get", testHost},
 	} {
 		if r := runHelper(t, &fake{}, "", args...); r.code != 1 || r.stderr == "" {
 			t.Errorf("args = %q: got %+v", args, r)

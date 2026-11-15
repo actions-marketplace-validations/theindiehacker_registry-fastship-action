@@ -94,7 +94,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # upload.yml の upload の step を、本物の registry.fastship.jp に向けて動かす。
+      # upload.yml の upload の step を、本物の registry.theindiehacker.io に向けて動かす。
       # 401 でなく 403 になれば、audience (https://<host>/v2) と組織のトークンを受け付けたうえで、イベントで断っている
       - name: "upload の step を本物の registry に向けて動かす"
         run: |
@@ -105,7 +105,7 @@ jobs:
           yq -r '.jobs.upload.steps[] | select(.id == "upload") | .run' .github/workflows/upload.yml > "$work/upload.sh"
           : > "$work/output"
           set +e
-          env GITHUB_OUTPUT="$work/output" REGISTRY_URL=https://registry.fastship.jp AUDIENCE=https://registry.fastship.jp/v2 \
+          env GITHUB_OUTPUT="$work/output" REGISTRY_URL=https://registry.theindiehacker.io AUDIENCE=https://registry.theindiehacker.io/v2 \
             MODULE=ci/upload-test/google VERSION=0.0.1 ARCHIVE="$work/module.zip" \
             bash --noprofile --norc -eo pipefail "$work/upload.sh"
           code=$?
@@ -142,12 +142,30 @@ jobs:
         with:
           terraform_wrapper: false
 
+      # with を書かないと actionlint が断るため、空の host を渡す (composite の Action では、どちらも空の文字列になる)
+      - name: "host が無いと断る"
+        id: missing
+        continue-on-error: true
+        uses: ./
+        with:
+          host: ""
+
+      - name: "断ったことを確かめる"
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.missing.outcome }}
+        run: |
+          test "$OUTCOME" = "failure"
+          echo "OK: host が無いと断った"
+
       # self-repository の形 ($/) は、actionlint・ghalint がまだ読めないため、./ にする
       - name: "credentials helper を入れる"
         uses: ./
+        with:
+          host: registry.theindiehacker.io
 
       # トークンそのものは出さず、audience と発行元だけを確かめる
-      - name: "host を指定しないと、helper が registry.fastship.jp の ID トークンを返す"
+      - name: "helper が registry.theindiehacker.io の ID トークンを返す"
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -155,34 +173,41 @@ jobs:
           else
             helper="$HOME/.terraform.d/plugins/terraform-credentials-fastship"
           fi
-          token=$("$helper" get registry.fastship.jp | jq -r .token)
+          token=$("$helper" --host=registry.theindiehacker.io get registry.theindiehacker.io | jq -r .token)
           payload=$(cut -d. -f2 <<< "$token" | tr '_-' '/+')
           while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
           claims=$(base64 -d <<< "$payload")
-          test "$(jq -r .aud <<< "$claims")" = "https://registry.fastship.jp/v2"
+          test "$(jq -r .aud <<< "$claims")" = "https://registry.theindiehacker.io/v2"
           test "$(jq -r .iss <<< "$claims")" = "https://token.actions.githubusercontent.com"
           echo "OK: aud と iss が正しい"
-          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.fastship.jp"] }' "$(dirname "$(dirname "$helper")")/fastship.tfrc"
-          echo "OK: host を指定しないと registry.fastship.jp になる"
+          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.theindiehacker.io"] }' "$(dirname "$(dirname "$helper")")/fastship.tfrc"
+          echo "OK: CLI 設定に host が入っている"
+
+          # --host が無いと、使い方のエラーになる
+          if "$helper" get registry.theindiehacker.io 2> /dev/null; then
+            echo "::error::--host が無いのに成功した"
+            exit 1
+          fi
+          echo "OK: --host が無いとエラーになる"
 
           # ほかのホスト (provider を取る registry.terraform.io など) には渡さない
-          test "$("$helper" get registry.terraform.io)" = "{}"
+          test "$("$helper" --host=registry.theindiehacker.io get registry.terraform.io)" = "{}"
           echo "OK: ほかのホストには {} を返す"
 
-      # registry.fastship.jp は、theindiehacker の組織のワークフローの ID トークンを受け付ける
+      # registry.theindiehacker.io は、theindiehacker の組織のワークフローの ID トークンを受け付ける
       - name: "TF_TOKEN なしで、本物の registry から terraform get する"
         shell: bash
         working-directory: ${{ runner.temp }}
         run: |
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
-          module "rdb" {
-            source  = "registry.fastship.jp/modules/rdb/google"
-            version = "1.0.0"
+          module "storage" {
+            source  = "registry.theindiehacker.io/modules/storage/google"
+            version = "~> 14.0"
           }
           EOF
           terraform get -no-color
-          test -d .terraform/modules/rdb
+          test -d .terraform/modules/storage
           echo "OK: モジュールを取得できた"
 
   cli-config-file:
@@ -213,6 +238,8 @@ jobs:
 
       - name: "credentials helper を入れる"
         uses: ./
+        with:
+          host: registry.theindiehacker.io
 
       - name: "TF_TOKEN なしで、本物の registry から terraform get する"
         working-directory: ${{ runner.temp }}
@@ -221,13 +248,13 @@ jobs:
           grep -q 'credentials_helper "fastship"' "$TF_CLI_CONFIG_FILE"
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
-          module "rdb" {
-            source  = "registry.fastship.jp/modules/rdb/google"
-            version = "1.0.0"
+          module "storage" {
+            source  = "registry.theindiehacker.io/modules/storage/google"
+            version = "~> 14.0"
           }
           EOF
           terraform get -no-color
-          test -d .terraform/modules/rdb
+          test -d .terraform/modules/storage
           echo "OK: モジュールを取得できた"
 
   host:
@@ -277,7 +304,7 @@ jobs:
           test "$(jq -r .iss <<< "$claims")" = "https://token.actions.githubusercontent.com"
           echo "OK: aud と iss が正しい"
 
-          # 既定のホスト (registry.fastship.jp) にも、ほかのホストにも渡さない
-          test "$("$helper" --host=registry.example.io get registry.fastship.jp)" = "{}"
+          # ほかのホストには渡さない
+          test "$("$helper" --host=registry.example.io get registry.theindiehacker.io)" = "{}"
           test "$("$helper" --host=registry.example.io get registry.terraform.io)" = "{}"
           echo "OK: ほかのホストには {} を返す"

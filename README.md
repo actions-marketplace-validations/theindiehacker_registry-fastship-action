@@ -4,7 +4,7 @@ GitHub Actions から、トークンを指定せずに、Private な Terraform M
 
 Action は Terraform の [credentials helper](https://developer.hashicorp.com/terraform/internals/credentials-helpers) を入れます。Terraform がモジュールを取得するときに、helper が GitHub Actions の ID トークン (OIDC) をその場で取って渡します。トークンの発行・保管や、`TF_TOKEN_<host>` の設定は要りません。
 
-- 既定のホストは `registry.fastship.jp` です。ほかの会社の registry には `host` を指定します。
+- registry のホスト名を `host` に書きます (必須)。
 - PC では、この helper ではなく `terraform login <host>` を使います ([PC から helper を消す](#-pc-から-helper-を消す))。
 - モジュールを registry に上げる reusable workflow もあります ([モジュールの upload](#-モジュールの-upload))。
 - Docker イメージを会社の Artifact Registry (Google Cloud) か ECR (AWS) に push する reusable workflow もあります ([Docker イメージの publish](#-docker-イメージの-publish))。
@@ -23,7 +23,7 @@ jobs:
 
       - uses: theindiehacker/registry-fastship-action@<版または SHA>
         with:
-          host: registry.example.io  # 省略すると registry.fastship.jp
+          host: registry.example.io  # 必須
 
       - run: terraform init  # env は要らない
 ```
@@ -35,32 +35,11 @@ module "rdb" {
 }
 ```
 
-### AWS (ECR)
-
-`cloud: aws` にすると、GitHub の OIDC で push の IAM ロールを借りて、ECR に push します。上の例の `with` のうち、`repository` から下を次に替えます (呼び出し元のジョブの `permissions` は同じです)。
-
-```yaml
-    with:
-      image: ${{ matrix.image }}
-      version: ${{ inputs.version }}
-      context: .
-      file: docker/Dockerfile
-      target: ${{ matrix.target }}
-      cloud: aws
-      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
-      aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
-```
-
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
-- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
-- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
-- **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
-
 ### 入力と出力
 
 | 入力 | 既定 | 説明 |
 |---|---|---|
-| `host` | `registry.fastship.jp` | registry のホスト名。スキーム・ポート・パスは書きません。helper は、このホストにだけ ID トークン (audience は `https://<host>/v2`) を渡します |
+| `host` | (必須) | registry のホスト名。スキーム・ポート・パスは書きません。helper は、このホストにだけ ID トークン (audience は `https://<host>/v2`) を渡します |
 
 - 版はタグか、コミットの SHA で固定してください。
 - Action は、固定したコミットのソースから helper をビルドします (20〜40 秒)。
@@ -81,7 +60,7 @@ Terraform は `terraform-credentials-fastship --host=<host> get <ホスト>` を
 - **イベント**: 受け付けるのは `push`・`pull_request`・`workflow_dispatch`・`schedule`・`merge_group`・`release`・`repository_dispatch` です。`pull_request_target`・`issue_comment`・`workflow_run` などは、外部の PR のコードが base のリポジトリの権限で動くことがあるため、registry が拒否します。
 - **401 になったとき**: Terraform は helper のエラーを表示せずに、トークンなしで続けます。`TF_LOG=WARN terraform init` で、`Failed to get credentials` の行に helper のエラーが出ます。
 - **トークンの有効期限**: ID トークンは `terraform init` のプロセスの中で使い回され、数分で切れます。1 回の `init` がそれより長くかかると、途中から 401 になります (やり直すと最初から取り直します)。ふつうは数分もかかりません。
-- **`TF_TOKEN_<host>`**: 設定されていると、helper より優先されます (Action が警告を出します)。
+- **`TF_TOKEN_<host>`**: 設定されていると、helper より優先されます。
 - **`credentials_helper` は 1 つだけ**: CLI 設定に書けるのは 1 つです。ほかの helper とは併用できず、1 つの job で使える `host` も 1 つです。
 - **`TF_CLI_CONFIG_FILE`**: 設定されていると、Terraform は `~/.terraform.d/*.tfrc` を読みません。Action はそのファイルに追記するので、`TF_CLI_CONFIG_FILE` は Action より前に設定してください。
 
@@ -126,7 +105,7 @@ jobs:
       id-token: write  # registry に送る ID トークン
     uses: theindiehacker/registry-fastship-action/.github/workflows/upload.yml@<版または SHA>
     with:
-      host: registry.example.io  # 省略すると registry.fastship.jp
+      host: registry.example.io  # 必須
       namespace: ${{ inputs.namespace }}
       name: ${{ inputs.name }}
       system: ${{ inputs.system }}
@@ -143,32 +122,11 @@ module "network" {
 }
 ```
 
-### AWS (ECR)
-
-`cloud: aws` にすると、GitHub の OIDC で push の IAM ロールを借りて、ECR に push します。上の例の `with` のうち、`repository` から下を次に替えます (呼び出し元のジョブの `permissions` は同じです)。
-
-```yaml
-    with:
-      image: ${{ matrix.image }}
-      version: ${{ inputs.version }}
-      context: .
-      file: docker/Dockerfile
-      target: ${{ matrix.target }}
-      cloud: aws
-      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
-      aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
-```
-
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
-- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
-- **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
-- **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
-
 ### 入力と出力
 
 | 入力 | 既定 | 説明 |
 |---|---|---|
-| `host` | `registry.fastship.jp` | registry のホスト名。スキーム・ポート・パスは書きません |
+| `host` | (必須) | registry のホスト名。スキーム・ポート・パスは書きません |
 | `namespace` | (必須) | 英小文字・数字・`-` `_` (先頭と末尾は英小文字か数字、64 文字まで) |
 | `name` | (必須) | `namespace` と同じ形 |
 | `system` | (必須) | 英小文字・数字 (`google`・`aws` など) |
@@ -194,7 +152,7 @@ module "network" {
 
 ### Google Cloud (Artifact Registry)
 
-registry の bootstrap が作る Docker リポジトリ `apps` に push します。認証は WIF です。
+[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の bootstrap が作る Docker リポジトリ `apps` に push します。認証は WIF です。
 
 ```yaml
 # 呼び出し元のリポジトリの .github/workflows/publish.yml
@@ -251,7 +209,7 @@ jobs:
       aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
-- **設定の値**: `repository` と `aws_role_arn` は、registry の AWS の bootstrap (`infrastructure/aws/bootstrap`) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
+- **設定の値**: `repository` と `aws_role_arn` は、[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の AWS の bootstrap ([`infrastructure/aws/bootstrap`](https://github.com/theindiehacker/registry.theindiehacker.io/tree/main/infrastructure/aws/bootstrap)) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
 - **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
 - **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
@@ -287,7 +245,7 @@ jobs:
 
 ## 💻 PC から helper を消す
 
-PC では `terraform login <host>` を使います。前の版の手順で helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `fastship.tfrc` を消してください。
+PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `fastship.tfrc` を消してください。
 
 ```bash
 # macOS・Linux
@@ -300,21 +258,6 @@ Remove-Item -ErrorAction SilentlyContinue "$env:APPDATA\terraform.d\plugins\terr
 ```
 
 `TF_CLI_CONFIG_FILE` や `~/.terraformrc` (Windows は `%APPDATA%\terraform.rc`) に `credentials_helper "fastship"` を書いたときは、その行も消してください。そのあと `terraform login <host>` を実行します。
-
-## 🔁 v1 からの移行
-
-v1 と v2.0.0 は使えません。registry は、v2.1.0 以降の helper が取る audience (`https://<host>/v2`) のトークンだけを受け付けるため、401 になります。
-
-v1 は ID トークンを出力し、`TF_TOKEN_registry_fastship_jp` に渡していました。v2 では `token` の出力を消しました。`id` と `env` を消してください。
-
-```diff
--      - id: registry
--        uses: theindiehacker/registry-fastship-action@v1.0.0
-+      - uses: theindiehacker/registry-fastship-action@<版または SHA>
-       - run: terraform init
--        env:
--          TF_TOKEN_registry_fastship_jp: ${{ steps.registry.outputs.token }}
-```
 
 ## 🛠️ 開発
 

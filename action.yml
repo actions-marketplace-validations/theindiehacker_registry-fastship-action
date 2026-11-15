@@ -1,5 +1,5 @@
 name: "Private Terraform Registry credentials helper"
-description: "Private Registry (既定は registry.fastship.jp) から terraform init でモジュールを取得できるよう、GitHub Actions の ID トークンを渡す credentials helper を入れる"
+description: "Private Registry から terraform init でモジュールを取得できるよう、GitHub Actions の ID トークンを渡す credentials helper を入れる"
 author: "Indie Hacker, Inc."
 branding:
   icon: "lock"
@@ -8,8 +8,7 @@ branding:
 inputs:
   host:
     description: "registry のホスト名 (スキーム・ポート・パスは書かない)。helper は、このホストにだけ ID トークン (audience は https://<host>/v2) を渡す"
-    required: false
-    default: "registry.fastship.jp"
+    required: true
 
 runs:
   using: composite
@@ -20,6 +19,11 @@ runs:
       env:
         HOST: ${{ inputs.host }}
       run: |
+        # composite の Action では required が効かないため、ここで確かめる
+        if [ -z "$HOST" ]; then
+          echo "::error::with: host に、registry のホスト名 (registry.example.io の形) を書いてください"
+          exit 1
+        fi
         host=$(tr '[:upper:]' '[:lower:]' <<< "$HOST")
         if ! [[ "$host" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
           echo "::error::host には、registry のホスト名 (registry.example.io の形。スキーム・ポート・パスは書かない) を書いてください: $HOST"
@@ -28,12 +32,6 @@ runs:
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
           echo "::error::ID トークンを取得できません。呼び出す job に permissions: id-token: write を付けてください (fork からの PR では取得できません)"
           exit 1
-        fi
-        # TF_TOKEN_<host> は helper より優先されるため、v1 の使い方が残っていると helper が使われない
-        # (Terraform は、ホストのドットを _、ハイフンを __ にした名前を読む)
-        token_var="TF_TOKEN_$(sed 's/-/__/g; s/\./_/g' <<< "$host")"
-        if [ -n "$(printenv "$token_var" || true)" ]; then
-          echo "::warning::$token_var が設定されているため、helper ではなく、そのトークンが使われます。v2 では消してください"
         fi
         echo "host=$host" >> "$GITHUB_OUTPUT"
 
