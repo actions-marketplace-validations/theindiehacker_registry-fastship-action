@@ -1,7 +1,8 @@
 name: "🐳 イメージの publish"
 
-# プロバイダーのリポジトリが呼ぶ reusable workflow。Docker イメージをビルドして、会社の Artifact Registry に push する。
-# - 認証は WIF。registry は、この workflow (main かタグの版) を通したジョブ (job_workflow_ref) にだけ push の SA を貸す。
+# プロバイダーのリポジトリが呼ぶ reusable workflow。Docker イメージをビルドして、会社の Artifact Registry (Google Cloud) か ECR (AWS) に push する。
+# - 認証は GitHub の OIDC。Google Cloud は WIF で push の SA を、AWS は push の IAM ロールを借りる。
+#   どちらも、この workflow (main かタグの版) を通したジョブ (job_workflow_ref) にだけ貸す。
 #   そのため、呼び出し元は、この workflow を SHA ではなくタグか main で指定する (SHA だと job_workflow_ref が @<SHA> になり、借りられない)
 # - 同じタグが既にあれば、ビルドせずに、そのイメージの digest を出す (途中で失敗したときに、同じ版でやり直せる)
 # - 処理の中身は tests/publish_test.sh が、step を抜き出してローカルの registry で確かめる
@@ -31,18 +32,30 @@ on:
         required: false
         type: string
         default: ""
+      cloud:
+        description: "push 先のクラウド。google (Artifact Registry) か aws (ECR)"
+        required: false
+        type: string
+        default: "google"
       repository:
-        description: "push 先の Docker リポジトリ (<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>)。registry の bootstrap の出力 image_publish の IMAGE_REPOSITORY"
+        description: "push 先。google は Docker リポジトリ (<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>。registry の bootstrap の出力 image_publish の IMAGE_REPOSITORY)。aws は ECR のレジストリと接頭辞 (<アカウント>.dkr.ecr.<リージョン>.amazonaws.com[/<接頭辞>])。イメージは <repository>/<image>"
         required: true
         type: string
       workload_identity_provider:
-        description: "WIF のプロバイダー (projects/<番号>/locations/global/workloadIdentityPools/<プール>/providers/<プロバイダー>)。image_publish の WIF_PROVIDER_NAME"
-        required: true
+        description: "google だけ。WIF のプロバイダー (projects/<番号>/locations/global/workloadIdentityPools/<プール>/providers/<プロバイダー>)。image_publish の WIF_PROVIDER_NAME"
+        required: false
         type: string
+        default: ""
       service_account:
-        description: "push の SA のメール。image_publish の IMAGE_SERVICE_ACCOUNT_EMAIL"
-        required: true
+        description: "google だけ。push の SA のメール。image_publish の IMAGE_SERVICE_ACCOUNT_EMAIL"
+        required: false
         type: string
+        default: ""
+      aws_role_arn:
+        description: "aws だけ。push の IAM ロールの ARN (arn:aws:iam::<アカウント>:role/<名前>)"
+        required: false
+        type: string
+        default: ""
     outputs:
       digest:
         description: "イメージの digest (sha256:…)。スキップしたときは、既にあるイメージの digest"
@@ -63,7 +76,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read  # 呼び出し元のリポジトリの checkout
-      id-token: write  # WIF で使う ID トークン
+      id-token: write  # WIF・IAM ロールを借りるときに使う ID トークン
     outputs:
       digest: ${{ steps.exists.outputs.digest || steps.build.outputs.digest }}
       image: ${{ steps.check.outputs.image }}@${{ steps.exists.outputs.digest || steps.build.outputs.digest }}
@@ -77,6 +90,10 @@ jobs:
           REPOSITORY: ${{ inputs.repository }}
           CONTEXT: ${{ inputs.context }}
           FILE: ${{ inputs.file }}
+          CLOUD: ${{ inputs.cloud }}
+          WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.workload_identity_provider }}
+          SERVICE_ACCOUNT: ${{ inputs.service_account }}
+          AWS_ROLE_ARN: ${{ inputs.aws_role_arn }}
         run: |
           # context と file は、リポジトリの中だけ (docker login の認証情報など、checkout の外のファイルをビルドに入れさせない)
           for path in "$CONTEXT" "$FILE"; do
@@ -95,19 +112,48 @@ jobs:
             echo "::error::version には、latest 以外のタグ (v1.2.3 など) を書いてください: $VERSION"
             exit 1
           fi
-          if ! [[ "$REPOSITORY" =~ ^([a-z0-9-]+-docker\.pkg\.dev)/([a-z][a-z0-9-]{4,28}[a-z0-9])/([a-z]([a-z0-9-]*[a-z0-9])?)$ ]]; then
-            echo "::error::repository には、Artifact Registry の Docker リポジトリ (<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>。スキームは書かない) を書いてください: $REPOSITORY"
-            exit 1
-          fi
-          host=${BASH_REMATCH[1]}
+          region=""
+          case "$CLOUD" in
+            google)
+              if ! [[ "$REPOSITORY" =~ ^([a-z0-9-]+-docker\.pkg\.dev)/([a-z][a-z0-9-]{4,28}[a-z0-9])/([a-z]([a-z0-9-]*[a-z0-9])?)$ ]]; then
+                echo "::error::repository には、Artifact Registry の Docker リポジトリ (<リージョン>-docker.pkg.dev/<プロジェクト>/<リポジトリ>。スキームは書かない) を書いてください: $REPOSITORY"
+                exit 1
+              fi
+              host=${BASH_REMATCH[1]}
+              if [ -z "$WORKLOAD_IDENTITY_PROVIDER" ] || [ -z "$SERVICE_ACCOUNT" ]; then
+                echo "::error::cloud が google のときは、workload_identity_provider と service_account を書いてください"
+                exit 1
+              fi
+              ;;
+            aws)
+              # 接頭辞とイメージ名を合わせたものが、ECR のリポジトリの名前になる
+              if ! [[ "$REPOSITORY" =~ ^([0-9]{12}\.dkr\.ecr\.([a-z]{2}(-[a-z]+)+-[0-9])\.amazonaws\.com)(/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]]; then
+                echo "::error::repository には、ECR のレジストリと接頭辞 (<アカウント>.dkr.ecr.<リージョン>.amazonaws.com[/<接頭辞>]。スキームは書かない) を書いてください: $REPOSITORY"
+                exit 1
+              fi
+              host=${BASH_REMATCH[1]}
+              region=${BASH_REMATCH[2]}
+              if ! [[ "$AWS_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$ ]]; then
+                echo "::error::cloud が aws のときは、aws_role_arn に push の IAM ロールの ARN (arn:aws:iam::<アカウント>:role/<名前>) を書いてください: $AWS_ROLE_ARN"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::cloud には、google か aws を書いてください: $CLOUD"
+              exit 1
+              ;;
+          esac
           {
             echo "host=$host"
+            echo "region=$region"
             echo "image=$REPOSITORY/$IMAGE"
-            echo "path=${REPOSITORY#"$host/"}/$IMAGE"
+            path=${REPOSITORY#"$host"}
+          echo "path=${path#/}${path:+/}$IMAGE"
           } >> "$GITHUB_OUTPUT"
 
       - name: "Google Cloud に認証する (WIF)"
         id: auth
+        if: inputs.cloud == 'google'
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3.0.0
         with:
           workload_identity_provider: ${{ inputs.workload_identity_provider }}
@@ -116,15 +162,47 @@ jobs:
           # 呼び出し元の checkout に認証情報のファイルを置かない
           create_credentials_file: false
 
-      - name: "Artifact Registry にログインする"
+      - name: "AWS に認証する (IAM ロールを借りる)"
+        id: aws-auth
+        if: inputs.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ steps.check.outputs.region }}
+          audience: sts.amazonaws.com
+          # 認証情報は login の step にだけ渡す (後の step・ビルドの環境変数に残さない)
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: "registry にログインする"
+        id: login
         env:
+          CLOUD: ${{ inputs.cloud }}
           HOST: ${{ steps.check.outputs.host }}
+          REGION: ${{ steps.check.outputs.region }}
           TOKEN: ${{ steps.auth.outputs.access_token }}
+          AWS_ACCESS_KEY_ID: ${{ steps.aws-auth.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws-auth.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws-auth.outputs.aws-session-token }}
         run: |
           # 認証情報は、checkout (ビルドのコンテキスト) の外の、この job だけのディレクトリに置く
           export DOCKER_CONFIG="$RUNNER_TEMP/docker-config"
           echo "DOCKER_CONFIG=$DOCKER_CONFIG" >> "$GITHUB_ENV"
-          docker login --username oauth2accesstoken --password-stdin "https://$HOST" <<< "$TOKEN"
+          if [ "$CLOUD" = "aws" ]; then
+            username=AWS
+            password=$(aws ecr get-login-password --region "$REGION")
+            echo "::add-mask::$password"
+            # ECR の Registry API は、docker login と同じユーザー名・パスワードの Basic 認証を受け付ける
+            basic=$(printf '%s:%s' "$username" "$password" | base64 -w0)
+            echo "::add-mask::$basic"
+            authorization="Basic $basic"
+          else
+            username=oauth2accesstoken
+            password=$TOKEN
+            authorization="Bearer $TOKEN"
+          fi
+          docker login --username "$username" --password-stdin "https://$HOST" <<< "$password"
+          echo "authorization=$authorization" >> "$GITHUB_OUTPUT"
 
       - name: "同じタグがあるか確かめる"
         id: exists
@@ -132,12 +210,13 @@ jobs:
           REGISTRY_URL: https://${{ steps.check.outputs.host }}
           IMAGE_PATH: ${{ steps.check.outputs.path }}
           VERSION: ${{ inputs.version }}
-          TOKEN: ${{ steps.auth.outputs.access_token }}
+          AUTHORIZATION: ${{ steps.login.outputs.authorization }}
+          CLOUD: ${{ inputs.cloud }}
         run: |
           headers=$(mktemp)
           # マニフェストの一覧 (index) も受け付け、push したときと同じ digest を返させる
           status=$(curl -sS -o /dev/null -D "$headers" -w '%{http_code}' --head \
-            -H "Authorization: Bearer $TOKEN" \
+            -H "Authorization: $AUTHORIZATION" \
             -H "Accept: application/vnd.oci.image.index.v1+json" \
             -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
             -H "Accept: application/vnd.oci.image.manifest.v1+json" \
@@ -157,6 +236,15 @@ jobs:
               { echo "exists=true"; echo "digest=$digest"; } >> "$GITHUB_OUTPUT"
               ;;
             404)
+              # ECR は、イメージごとのリポジトリを registry の Terraform で作る (push のロールには作る権限が無い)。
+              # 無いリポジトリには push できないため、ビルドする前に、作り方を案内して失敗する
+              if [ "$CLOUD" = "aws" ]; then
+                body=$(curl -sS -H "Authorization: $AUTHORIZATION" "$REGISTRY_URL/v2/$IMAGE_PATH/manifests/$VERSION") || true
+                if grep -q '"NAME_UNKNOWN"' <<< "$body"; then
+                  echo "::error::ECR にリポジトリ $IMAGE_PATH がありません。registry の AWS の bootstrap の変数 app_images にイメージの名前を足して、apply してください"
+                  exit 1
+                fi
+              fi
               echo "exists=false" >> "$GITHUB_OUTPUT"
               ;;
             *)
