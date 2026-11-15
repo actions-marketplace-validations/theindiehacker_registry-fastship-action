@@ -201,13 +201,13 @@ jobs:
         run: |
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
-          module "rdb" {
-            source  = "registry.theindiehacker.io/modules/rdb/google"
-            version = "1.0.0"
+          module "storage" {
+            source  = "registry.theindiehacker.io/modules/storage/google"
+            version = "~> 14.0"
           }
           EOF
           terraform get -no-color
-          test -d .terraform/modules/rdb
+          test -d .terraform/modules/storage
           echo "OK: モジュールを取得できた"
 
   cli-config-file:
@@ -248,13 +248,13 @@ jobs:
           grep -q 'credentials_helper "fastship"' "$TF_CLI_CONFIG_FILE"
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
-          module "rdb" {
-            source  = "registry.theindiehacker.io/modules/rdb/google"
-            version = "1.0.0"
+          module "storage" {
+            source  = "registry.theindiehacker.io/modules/storage/google"
+            version = "~> 14.0"
           }
           EOF
           terraform get -no-color
-          test -d .terraform/modules/rdb
+          test -d .terraform/modules/storage
           echo "OK: モジュールを取得できた"
 
   host:
