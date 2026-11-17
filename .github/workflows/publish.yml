@@ -56,6 +56,11 @@ on:
         required: false
         type: string
         default: ""
+      annotations:
+        description: "manifest に付ける OCI の annotation。1 行に 1 つ key=value (例: com.easysaas.engine.type=inframanager)。渡すと、docker-container のビルダーで、provenance を付けずに 1 枚の manifest にする (App Lifecycle Manager の雛形など)"
+        required: false
+        type: string
+        default: ""
     outputs:
       digest:
         description: "イメージの digest (sha256:…)。スキップしたときは、既にあるイメージの digest"
@@ -94,7 +99,18 @@ jobs:
           WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.workload_identity_provider }}
           SERVICE_ACCOUNT: ${{ inputs.service_account }}
           AWS_ROLE_ARN: ${{ inputs.aws_role_arn }}
+          ANNOTATIONS: ${{ inputs.annotations }}
         run: |
+          # annotation は 1 行に 1 つ key=value (空の行は飛ばす)。buildx の --annotation に渡すため、key は英数字と . _ - だけにし、値には , " と制御文字を入れさせない
+          annotation_pattern='^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?=[^,"[:cntrl:]]*$'
+          while IFS= read -r line; do
+            line=${line%$'\r'}
+            if [ -z "${line//[[:space:]]/}" ]; then continue; fi
+            if ! [[ "$line" =~ $annotation_pattern ]]; then
+              echo "::error::annotations には、1 行に 1 つ key=value (key は英数字と . _ -。値に , \" は使えない) を書いてください: $line"
+              exit 1
+            fi
+          done <<< "$ANNOTATIONS"
           # context と file は、リポジトリの中だけ (docker login の認証情報など、checkout の外のファイルをビルドに入れさせない)
           for path in "$CONTEXT" "$FILE"; do
             if [[ "$path" == /* || "$path" == "~"* || "/$path/" == *"/../"* ]]; then
@@ -261,6 +277,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # annotation を付けるときは、App Lifecycle Manager の docs と同じく docker-container のビルダーを使う
+      # (docker のドライバは、Docker の image store によっては manifest に annotation を付けられない)
+      - name: "annotation 用のビルダーを用意する"
+        id: buildx
+        if: steps.exists.outputs.exists == 'false' && inputs.annotations != ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+        with:
+          driver: docker-container
+
       - name: "ビルドして push する"
         id: build
         if: steps.exists.outputs.exists == 'false'
@@ -270,6 +295,7 @@ jobs:
           CONTEXT: ${{ inputs.context }}
           FILE: ${{ inputs.file }}
           TARGET: ${{ inputs.target }}
+          ANNOTATIONS: ${{ inputs.annotations }}
         run: |
           # シンボリックリンクで checkout の外 (docker の認証情報のある RUNNER_TEMP など) を指していないか、たどった先で確かめる
           workspace=$(realpath -e "$GITHUB_WORKSPACE")
@@ -293,6 +319,15 @@ jobs:
             --label "org.opencontainers.image.version=$VERSION"
           )
           if [ -n "$TARGET" ]; then args+=(--target "$TARGET"); fi
+          # annotation は manifest に付け、provenance を付けずに 1 枚の manifest にする (App Lifecycle Manager の docs と同じ形。形は check で確かめた)
+          annotated=false
+          while IFS= read -r line; do
+            line=${line%$'\r'}
+            if [ -z "${line//[[:space:]]/}" ]; then continue; fi
+            args+=(--annotation "manifest:$line")
+            annotated=true
+          done <<< "$ANNOTATIONS"
+          if [ "$annotated" = "true" ]; then args+=(--provenance=false); fi
           docker buildx build "${args[@]}" "$CONTEXT"
           digest=$(jq -r '."containerimage.digest" // empty' "$metadata")
           if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then

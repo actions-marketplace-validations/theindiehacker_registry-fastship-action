@@ -15,6 +15,7 @@ failures=0
 
 cleanup() {
   docker rm -f "$container" > /dev/null 2>&1 || true
+  docker buildx rm "publish-test-builder-$$" > /dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -64,7 +65,7 @@ fail() {
 
 check_env=(IMAGE=sample VERSION=v1.0.0 REPOSITORY=asia-northeast1-docker.pkg.dev/my-project/apps CONTEXT=. FILE=
   CLOUD=google WORKLOAD_IDENTITY_PROVIDER=projects/123/locations/global/workloadIdentityPools/github/providers/github
-  SERVICE_ACCOUNT=image-publish@my-project.iam.gserviceaccount.com AWS_ROLE_ARN=)
+  SERVICE_ACCOUNT=image-publish@my-project.iam.gserviceaccount.com AWS_ROLE_ARN= ANNOTATIONS=)
 ecr=123456789012.dkr.ecr.ap-northeast-1.amazonaws.com
 aws_env=(IMAGE=sample VERSION=v1.0.0 REPOSITORY="$ecr/apps" CONTEXT=. FILE=
   CLOUD=aws WORKLOAD_IDENTITY_PROVIDER= SERVICE_ACCOUNT= AWS_ROLE_ARN=arn:aws:iam::123456789012:role/image-publish)
@@ -132,6 +133,34 @@ for bad in \
     fail "check: $bad を受け付けた"
   else
     pass "check: $bad を断る"
+  fi
+done
+
+# ---- annotation の入力の検査 (check) ----
+
+good_annotations=$'com.easysaas.engine.type=inframanager\n\ncom.easysaas.engine.version=1.5.7\nempty='
+if run_step check "${check_env[@]}" ANNOTATIONS="$good_annotations" > /dev/null; then
+  pass "check: 1 行に 1 つの key=value の annotation (空の行・空の値を含む) を受け付ける"
+else
+  fail "check: 正しい annotation を断った"
+fi
+
+for bad in \
+  "no-equals" \
+  "=value" \
+  "-key=value" \
+  "key.=value" \
+  "manifest:key=value" \
+  "key with space=value" \
+  "key=a,b" \
+  'key=a"b' \
+  $'key=a\tb' \
+  " key=value" \
+  $'com.example.ok=1\nbad line'; do
+  if run_step check "${check_env[@]}" ANNOTATIONS="$bad" > /dev/null 2>&1; then
+    fail "check: annotation ${bad@Q} を受け付けた"
+  else
+    pass "check: annotation ${bad@Q} を断る"
   fi
 done
 
@@ -328,6 +357,50 @@ if [ -n "$built" ]; then
   else
     fail "build: org.opencontainers.image.source が違う: $source_label"
   fi
+fi
+
+# ---- annotation (buildx・build) ----
+
+if [ "$(step_if buildx)" = "steps.exists.outputs.exists == 'false' && inputs.annotations != ''" ] &&
+  [[ "$(step_field buildx uses)" =~ ^docker/setup-buildx-action@[0-9a-f]{40}$ ]] &&
+  [ "$(step_field buildx with.driver)" = "docker-container" ] &&
+  [ "$(step_field build env.ANNOTATIONS)" = '${{ inputs.annotations }}' ]; then
+  pass "buildx: annotation を渡したときだけ、docker-container のビルダーを用意する"
+else
+  fail "buildx: if・uses・with か、build の env が違う: $(step_if buildx) / $(step_field buildx uses) / $(step_field buildx with)"
+fi
+
+# workflow の setup-buildx-action と同じ docker-container のビルダー。ローカルの registry に push するため、ホストのネットワークを使う
+builder="publish-test-builder-$$"
+docker buildx create --name "$builder" --driver docker-container --driver-opt network=host > /dev/null
+mkdir -p "$work/src/blueprint"
+echo 'terraform {}' > "$work/src/blueprint/main.tf"
+printf 'FROM scratch\nCOPY *.tf /\n' > "$work/src/blueprint/Dockerfile"
+manifest() {
+  curl -fsS -H "Accept: application/vnd.oci.image.index.v1+json" -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+    -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "http://$registry/v2/$image_path/manifests/$1"
+}
+if run_step build "${build_env[@]}" BUILDX_BUILDER="$builder" VERSION=v1.0.2 CONTEXT="$work/src/blueprint" FILE= TARGET= \
+  ANNOTATIONS="$good_annotations" > /dev/null 2>&1; then
+  annotated=$(output digest)
+  body=$(manifest v1.0.2)
+  if [ "$(jq -r '.mediaType' <<< "$body")" = "application/vnd.oci.image.manifest.v1+json" ] &&
+    [ "$(jq -c '.annotations' <<< "$body")" = '{"com.easysaas.engine.type":"inframanager","com.easysaas.engine.version":"1.5.7","empty":""}' ] &&
+    [ "$(manifest "$annotated" | jq -c '.annotations')" = "$(jq -c '.annotations' <<< "$body")" ]; then
+    pass "build: annotation を manifest に付け、provenance の無い 1 枚の manifest で push し、その digest を出す"
+  else
+    fail "build: manifest か annotation が違う: $body (digest: $annotated)"
+  fi
+else
+  fail "build: annotation を付けたビルドか push に失敗した"
+fi
+docker buildx rm "$builder" > /dev/null 2>&1 || true
+
+if run_step build "${build_env[@]}" VERSION=v1.0.3 CONTEXT="$work/src/blueprint" FILE= TARGET= ANNOTATIONS= > /dev/null 2>&1 &&
+  [ "$(manifest v1.0.3 | jq -r '.annotations["com.easysaas.engine.type"] // empty')" = "" ]; then
+  pass "build: annotation を渡さなければ、今までどおり annotation を付けない"
+else
+  fail "build: annotation を渡さないビルドが違う"
 fi
 
 # リポジトリの中のシンボリックリンクで、外 (RUNNER_TEMP など) を指すものは断る
