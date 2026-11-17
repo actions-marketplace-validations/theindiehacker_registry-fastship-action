@@ -228,6 +228,7 @@ jobs:
 | `workload_identity_provider` | (`google` で必須) | WIF のプロバイダー |
 | `service_account` | (`google` で必須) | push の SA |
 | `aws_role_arn` | (`aws` で必須) | push の IAM ロールの ARN |
+| `annotations` | なし | manifest に付ける OCI の annotation。1 行に 1 つ `key=value` (下の「annotation」) |
 
 | 出力 | 説明 |
 |---|---|
@@ -241,6 +242,16 @@ jobs:
 - **matrix の出力**: matrix のジョブの出力は 1 つにまとまるため、イメージごとの digest は、各ジョブの Summary (`docker pull <イメージ>@sha256:…`) で見ます。
 - **push できるジョブ (Google Cloud)**: 設定した組織のリポジトリなら、どのブランチから呼んでも push できます (ID トークンに、呼び出し元のデフォルトブランチを示すクレームが無いため)。版のイメージは、デフォルトブランチかタグから publish してください。自分の workflow で直接 push するジョブは、SA を借りられません。AWS は、上の「push できるジョブ」のとおりです。
 - **イメージ名は早い者勝ち**: イメージ名は、呼び出し元のリポジトリに結び付けません (組織の中は信頼します。モジュールの上げ方と同じです)。組織のどのリポジトリからでも、まだ無いイメージ名・タグを先に push できます。一度 push したタグは付け替えられず、ほかのリポジトリからも上書きできません。イメージ名は、リポジトリの名前を含めるなどして、ぶつからないようにしてください。
+- **annotation**: `annotations` を渡すと、`docker-container` のビルダーで、manifest に annotation を付け、provenance を付けずに 1 枚の manifest で push します ([App Lifecycle Manager の雛形](https://docs.cloud.google.com/app-lifecycle-manager/create-upload-blueprint)と同じ形)。key は英数字と `.` `_` `-` だけ、値に `,` `"` と制御文字は使えません。渡さなければ、今までと同じです
+  ```yaml
+      with:
+        image: blueprint-project
+        context: infrastructure/blueprints/project
+        file: infrastructure/blueprints/project/Dockerfile.Blueprint
+        annotations: |
+          com.easysaas.engine.type=inframanager
+          com.easysaas.engine.version=1.5.7
+  ```
 - **イメージ**: ラベル `org.opencontainers.image.source` (リポジトリ)・`revision` (コミット)・`version` を付けます。プラットフォームは runner (`linux/amd64`) です。
 
 ## 💻 PC から helper を消す
