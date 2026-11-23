@@ -78,6 +78,22 @@ jobs:
       - name: "tests/upload_test.sh"
         run: bash tests/upload_test.sh
 
+  uv:
+    name: "uv の認証の Action (偽の ID トークンの発行元)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # uv/action.yml の step を抜き出し、偽の ID トークンの発行元で、入力の検査・audience・$GITHUB_ENV に書く値・マスクを確かめる
+      - name: "tests/uv_test.sh"
+        run: bash tests/uv_test.sh
+
   upload-real:
     name: "本物の registry が、pull_request の ID トークンでは上げさせない (403)"
     # 上げられるイベント (push・workflow_dispatch・release) では本当に上がってしまうため、pull_request だけで動かす。
