@@ -8,6 +8,7 @@ Action は Terraform の [credentials helper](https://developer.hashicorp.com/te
 - PC では、この helper ではなく `terraform login <host>` を使います ([PC から helper を消す](#-pc-から-helper-を消す))。
 - モジュールを registry に上げる reusable workflow もあります ([モジュールの upload](#-モジュールの-upload))。
 - Docker イメージを会社の Artifact Registry (Google Cloud) か ECR (AWS) に push する reusable workflow もあります ([Docker イメージの publish](#-docker-イメージの-publish))。
+- registry の Python のパッケージを uv で取得・公開するための Action もあります ([Python のパッケージ (uv)](#-python-のパッケージ-uv))。
 
 ## 📖 使い方
 
@@ -254,6 +255,51 @@ jobs:
   ```
 - **イメージ**: ラベル `org.opencontainers.image.source` (リポジトリ)・`revision` (コミット)・`version` を付けます。プラットフォームは runner (`linux/amd64`) です。
 
+## 🐍 Python のパッケージ (uv)
+
+registry の Python のパッケージを、CI から `uv add`・`uv sync`・`uv publish` できるようにします。Action (`uv/`) が ID トークン (audience は `https://<host>/v2`) を取り、uv が読む環境変数に入れます。シークレットは要りません。
+
+```toml
+# pyproject.toml
+[[tool.uv.index]]
+name = "internal"
+url = "https://registry.example.io/python/simple/"
+publish-url = "https://registry.example.io/python/legacy/"
+explicit = true
+```
+
+```yaml
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # ID トークンの取得に要る
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@<版または SHA>
+      - run: uv build
+
+      - uses: theindiehacker/registry-fastship-action/uv@<版または SHA>
+        with:
+          host: registry.example.io  # 必須
+
+      - run: uv publish --index internal
+```
+
+### 入力と出力
+
+| 入力 | 既定 | 説明 |
+|---|---|---|
+| `host` | (必須) | registry のホスト名。スキーム・ポート・パスは書きません |
+| `index` | `internal` | `pyproject.toml` の `[[tool.uv.index]]` の `name` |
+
+- 後の step に、`UV_INDEX_<NAME>_USERNAME`・`UV_INDEX_<NAME>_PASSWORD` (`<NAME>` は `index` を大文字にし、英数字のほかを `_` にしたもの。`internal` なら `UV_INDEX_INTERNAL_*`) と、`UV_PUBLISH_USERNAME`・`UV_PUBLISH_PASSWORD` を渡します。ユーザー名は `__token__`、パスワードは ID トークンです (ログではマスクされます)。
+- **トークンの有効期限**: ID トークンは数分で切れます。Action は、`uv add`・`uv sync`・`uv publish` の直前に置いてください。長い job で後からもう一度使うときは、Action をもう一度呼びます。
+- **上げられるワークフロー**: モジュールの upload と同じく、registry が、保護したブランチ・タグの `push`・`workflow_dispatch`・`release` だけに絞ります。取得は、組織のどのワークフローからでもできます。
+- job の後の step からも環境変数を読めます。ただし、`id-token: write` の job では、どの step も元から ID トークンを取れるため、取れる範囲は広がりません。
+- uv は入れません。`astral-sh/setup-uv` などで入れてください。
+
 ## 💻 PC から helper を消す
 
 PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `fastship.tfrc` を消してください。
@@ -277,6 +323,9 @@ go test ./...
 
 # モジュールの upload の reusable workflow (python3・jq・yq・curl が要る。偽の registry で動かす)
 bash tests/upload_test.sh
+
+# uv の認証の Action (python3・jq・yq・curl が要る。偽の ID トークンの発行元で動かす)
+bash tests/uv_test.sh
 
 # イメージの publish の reusable workflow (docker・jq・yq が要る。ローカルの registry:2 と偽の aws コマンドで動かす)
 bash tests/publish_test.sh

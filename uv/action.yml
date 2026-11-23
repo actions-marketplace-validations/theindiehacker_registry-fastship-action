@@ -1,0 +1,70 @@
+name: "Private Registry の uv の認証"
+description: "Private Registry の Python のパッケージを uv add・uv publish できるよう、GitHub Actions の ID トークンを uv の環境変数に入れる"
+author: "Indie Hacker, Inc."
+branding:
+  icon: "lock"
+  color: "blue"
+
+inputs:
+  host:
+    description: "registry のホスト名 (スキーム・ポート・パスは書かない)。ID トークンの audience は https://<host>/v2"
+    required: true
+  index:
+    description: "pyproject.toml の [[tool.uv.index]] の name。UV_INDEX_<NAME>_USERNAME・UV_INDEX_<NAME>_PASSWORD の <NAME> になる"
+    required: false
+    default: "internal"
+
+runs:
+  using: composite
+  steps:
+    - name: "ID トークンを uv の環境変数に入れる"
+      id: credentials
+      shell: bash
+      env:
+        HOST: ${{ inputs.host }}
+        INDEX: ${{ inputs.index }}
+      run: |
+        # composite の Action では required が効かないため、ここで確かめる
+        if [ -z "$HOST" ]; then
+          echo "::error::with: host に、registry のホスト名 (registry.example.io の形) を書いてください"
+          exit 1
+        fi
+        host=$(tr '[:upper:]' '[:lower:]' <<< "$HOST")
+        if ! [[ "$host" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]; then
+          echo "::error::host には、registry のホスト名 (registry.example.io の形。スキーム・ポート・パスは書かない) を書いてください: $HOST"
+          exit 1
+        fi
+        # uv の index の名前は、英数字・-・_・. だけ。環境変数の名前は、大文字にして英数字のほかを _ にしたもの
+        if ! [[ "$INDEX" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+          echo "::error::index には、pyproject.toml の [[tool.uv.index]] の name (英数字・-・_・. だけ) を書いてください: $INDEX"
+          exit 1
+        fi
+        name=$(tr '[:lower:]' '[:upper:]' <<< "$INDEX" | tr -c 'A-Z0-9\n' '_')
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "::error::ID トークンを取得できません。呼び出す job に permissions: id-token: write を付けてください (fork からの PR では取得できません)"
+          exit 1
+        fi
+
+        if ! response=$(curl -sS --fail --max-time 30 --retry 3 --retry-delay 2 -G \
+          -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          --data-urlencode "audience=https://$host/v2" \
+          "$ACTIONS_ID_TOKEN_REQUEST_URL"); then
+          echo "::error::ID トークンを取得できませんでした"
+          exit 1
+        fi
+        token=$(jq -r '.value // empty' <<< "$response" 2> /dev/null || true)
+        if ! [[ "$token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+          echo "::error::ID トークンの応答が、JWT の形ではありません"
+          exit 1
+        fi
+        echo "::add-mask::$token"
+
+        # uv は、index ごとの資格情報を UV_INDEX_<NAME>_USERNAME・_PASSWORD から、uv publish のものを UV_PUBLISH_* から読む。
+        # registry は Basic 認証のパスワードを ID トークンとして確かめ、ユーザー名は見ない
+        {
+          echo "UV_INDEX_${name}_USERNAME=__token__"
+          echo "UV_INDEX_${name}_PASSWORD=$token"
+          echo "UV_PUBLISH_USERNAME=__token__"
+          echo "UV_PUBLISH_PASSWORD=$token"
+        } >> "$GITHUB_ENV"
+        echo "uv の index: $INDEX (UV_INDEX_${name}_*)。ID トークンは数分で切れるので、uv add・uv publish の直前に置いてください"
