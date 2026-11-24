@@ -1,9 +1,9 @@
-// terraform-credentials-fastship は、Private Registry の Terraform の credentials helper。
+// terraform-credentials-registry は、Private Registry の Terraform の credentials helper。
 // Terraform がモジュールを取得するときに、GitHub Actions の ID トークンを、その場で取って渡す。
 // トークンは保管しない (取るたびに新しくなるため、有効期限を気にしなくてよい)。
 // PC では使わない (terraform login を使う)。
 //
-// 使い方 (Terraform が呼ぶ): terraform-credentials-fastship --host=<registry のホスト> get <ホスト>
+// 使い方 (Terraform が呼ぶ): terraform-credentials-registry --host=<registry のホスト> get <ホスト>
 // プロトコル: https://developer.hashicorp.com/terraform/internals/credentials-helpers
 package main
 
@@ -81,7 +81,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, d deps) int {
 		}
 	}
 	if registryHost == "" || len(positional) != 2 {
-		fmt.Fprintf(stderr, "使い方: terraform-credentials-fastship %s<registry のホスト> get <ホスト>\n", hostFlag)
+		fmt.Fprintf(stderr, "使い方: terraform-credentials-registry %s<registry のホスト> get <ホスト>\n", hostFlag)
 		return 1
 	}
 	verb, host := positional[0], positional[1]
@@ -108,7 +108,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, d deps) int {
 	case "store":
 		// 失敗するときも、Terraform が送ってくる資格情報を読み切る (プロトコルの決まり)
 		_, _ = io.Copy(io.Discard, stdin)
-		fmt.Fprintln(stderr, "terraform login には対応していません。PC では helper と fastship.tfrc を消してから terraform login してください")
+		fmt.Fprintln(stderr, "terraform login には対応していません。PC では helper と registry.tfrc を消してから terraform login してください")
 		return 1
 	case "forget":
 		// 何も保管していないので、消すものも無い
@@ -121,7 +121,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, d deps) int {
 
 func githubToken(ctx context.Context, audience string, d deps) (string, error) {
 	if d.getenv("GITHUB_ACTIONS") != "true" {
-		return "", errors.New("GitHub Actions の外では使えません。PC では helper と fastship.tfrc を消してから terraform login してください")
+		return "", errors.New("GitHub Actions の外では使えません。PC では helper と registry.tfrc を消してから terraform login してください")
 	}
 	requestURL, requestToken := d.getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), d.getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
 	if requestURL == "" || requestToken == "" {
