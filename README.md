@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: theindiehacker/registry-fastship-action@<版または SHA>
+      - uses: theindiehacker/registry-action@<版または SHA>
         with:
           host: registry.example.io  # 必須
 
@@ -49,7 +49,7 @@ module "rdb" {
 
 ## 🔧 helper の動き
 
-Terraform は `terraform-credentials-fastship --host=<host> get <ホスト>` を実行します。
+Terraform は `terraform-credentials-registry --host=<host> get <ホスト>` を実行します。
 
 - `<host>` のときだけ、GitHub Actions の ID トークン (audience は `https://<host>/v2`) を返します。ほかのホスト (`registry.terraform.io` など) には `{}` を返し、トークンを渡しません。
 - トークンは保管しません (`terraform login` には対応していません)。
@@ -104,7 +104,7 @@ jobs:
     permissions:
       contents: read
       id-token: write  # registry に送る ID トークン
-    uses: theindiehacker/registry-fastship-action/.github/workflows/upload.yml@<版または SHA>
+    uses: theindiehacker/registry-action/.github/workflows/upload.yml@<版または SHA>
     with:
       host: registry.example.io  # 必須
       namespace: ${{ inputs.namespace }}
@@ -182,7 +182,7 @@ jobs:
     permissions:
       contents: read
       id-token: write  # WIF に要る
-    uses: theindiehacker/registry-fastship-action/.github/workflows/publish.yml@<タグ>  # SHA では借りられない (下の注意)
+    uses: theindiehacker/registry-action/.github/workflows/publish.yml@<タグ>  # SHA では借りられない (下の注意)
     with:
       image: ${{ matrix.image }}
       version: ${{ inputs.version }}
@@ -280,7 +280,7 @@ jobs:
       - uses: astral-sh/setup-uv@<版または SHA>
       - run: uv build
 
-      - uses: theindiehacker/registry-fastship-action/uv@<版または SHA>
+      - uses: theindiehacker/registry-action/uv@<版または SHA>
         with:
           host: registry.example.io  # 必須
 
@@ -302,19 +302,21 @@ jobs:
 
 ## 💻 PC から helper を消す
 
-PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `fastship.tfrc` を消してください。
+PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `registry.tfrc` を消してください。
 
 ```bash
 # macOS・Linux
-rm -f ~/.terraform.d/plugins/terraform-credentials-fastship ~/.terraform.d/fastship.tfrc
+rm -f ~/.terraform.d/plugins/terraform-credentials-registry ~/.terraform.d/registry.tfrc
 ```
 
 ```powershell
 # Windows
-Remove-Item -ErrorAction SilentlyContinue "$env:APPDATA\terraform.d\plugins\terraform-credentials-fastship.exe", "$env:APPDATA\terraform.d\fastship.tfrc"
+Remove-Item -ErrorAction SilentlyContinue "$env:APPDATA\terraform.d\plugins\terraform-credentials-registry.exe", "$env:APPDATA\terraform.d\registry.tfrc"
 ```
 
-`TF_CLI_CONFIG_FILE` や `~/.terraformrc` (Windows は `%APPDATA%\terraform.rc`) に `credentials_helper "fastship"` を書いたときは、その行も消してください。そのあと `terraform login <host>` を実行します。
+`TF_CLI_CONFIG_FILE` や `~/.terraformrc` (Windows は `%APPDATA%\terraform.rc`) に `credentials_helper "registry"` を書いたときは、その行も消してください。そのあと `terraform login <host>` を実行します。
+
+v4 までの helper は、名前が `terraform-credentials-fastship`・`fastship.tfrc`・`credentials_helper "fastship"` でした。v4 までを入れた PC やセルフホストのランナーでは、古い名前のファイルと行も消してください (残っていると、`credentials_helper` が 2 つになり、Terraform が CLI 設定を読めません)。GitHub がホストするランナーは job ごとに新しいので、何もいりません。
 
 ## 🛠️ 開発
 

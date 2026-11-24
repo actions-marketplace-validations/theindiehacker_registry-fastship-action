@@ -59,30 +59,30 @@ runs:
         # Terraform は、CLI 設定のディレクトリの plugins から helper を探し、*.tfrc を CLI 設定として読む
         if [ "$RUNNER_OS" = "Windows" ]; then
           config_dir="$(cygpath -u "$APPDATA")/terraform.d"
-          helper="$config_dir/plugins/terraform-credentials-fastship.exe"
+          helper="$config_dir/plugins/terraform-credentials-registry.exe"
         else
           config_dir="$HOME/.terraform.d"
-          helper="$config_dir/plugins/terraform-credentials-fastship"
+          helper="$config_dir/plugins/terraform-credentials-registry"
         fi
         mkdir -p "$config_dir/plugins"
         (cd "$ACTION_PATH" && go build -trimpath -o "$helper" .)
 
         # ホストは、前の step で形を確かめてある
-        block="credentials_helper \"fastship\" { args = [\"--host=$REGISTRY_HOST\"] }"
+        block="credentials_helper \"registry\" { args = [\"--host=$REGISTRY_HOST\"] }"
         if [ -n "${TF_CLI_CONFIG_FILE:-}" ]; then
           # TF_CLI_CONFIG_FILE があると、Terraform は CLI 設定のディレクトリの *.tfrc を読まないため、そのファイルに足す
           config="$TF_CLI_CONFIG_FILE"
           if [ -f "$config" ] && grep -q 'credentials_helper' "$config"; then
             # 同じ job で同じホストに 2 回使ったときは、そのままにする
             if ! grep -qxF "$block" "$config"; then
-              echo "::error::$config に、ほかの credentials_helper (ほかのホストの fastship を含む) があります。Terraform の CLI 設定に書ける credentials_helper は 1 つだけです"
+              echo "::error::$config に、ほかの credentials_helper (ほかのホストの registry を含む) があります。Terraform の CLI 設定に書ける credentials_helper は 1 つだけです"
               exit 1
             fi
           else
             printf '\n%s\n' "$block" >> "$config"
           fi
         else
-          config="$config_dir/fastship.tfrc"
+          config="$config_dir/registry.tfrc"
           printf '%s\n' "$block" > "$config"
         fi
         echo "helper: $helper"

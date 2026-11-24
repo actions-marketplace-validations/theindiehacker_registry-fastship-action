@@ -233,9 +233,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            helper="$(cygpath -u "$APPDATA")/terraform.d/plugins/terraform-credentials-fastship.exe"
+            helper="$(cygpath -u "$APPDATA")/terraform.d/plugins/terraform-credentials-registry.exe"
           else
-            helper="$HOME/.terraform.d/plugins/terraform-credentials-fastship"
+            helper="$HOME/.terraform.d/plugins/terraform-credentials-registry"
           fi
           token=$("$helper" --host=registry.theindiehacker.io get registry.theindiehacker.io | jq -r .token)
           payload=$(cut -d. -f2 <<< "$token" | tr '_-' '/+')
@@ -244,7 +244,7 @@ jobs:
           test "$(jq -r .aud <<< "$claims")" = "https://registry.theindiehacker.io/v2"
           test "$(jq -r .iss <<< "$claims")" = "https://token.actions.githubusercontent.com"
           echo "OK: aud と iss が正しい"
-          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.theindiehacker.io"] }' "$(dirname "$(dirname "$helper")")/fastship.tfrc"
+          grep -qxF 'credentials_helper "registry" { args = ["--host=registry.theindiehacker.io"] }' "$(dirname "$(dirname "$helper")")/registry.tfrc"
           echo "OK: CLI 設定に host が入っている"
 
           # --host が無いと、使い方のエラーになる
@@ -309,7 +309,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           grep -q 'plugin_cache_dir' "$TF_CLI_CONFIG_FILE"
-          grep -q 'credentials_helper "fastship"' "$TF_CLI_CONFIG_FILE"
+          grep -q 'credentials_helper "registry"' "$TF_CLI_CONFIG_FILE"
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
           module "storage" {
@@ -347,7 +347,7 @@ jobs:
           OUTCOME: ${{ steps.invalid.outcome }}
         run: |
           test "$OUTCOME" = "failure"
-          test ! -e ~/.terraform.d/fastship.tfrc
+          test ! -e ~/.terraform.d/registry.tfrc
           echo "OK: 断った"
 
       - name: "credentials helper を入れる"
@@ -358,8 +358,8 @@ jobs:
       # トークンそのものは出さず、audience と発行元だけを確かめる
       - name: "helper が指定したホストの ID トークンだけを返す"
         run: |
-          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.example.io"] }' ~/.terraform.d/fastship.tfrc
-          helper="$HOME/.terraform.d/plugins/terraform-credentials-fastship"
+          grep -qxF 'credentials_helper "registry" { args = ["--host=registry.example.io"] }' ~/.terraform.d/registry.tfrc
+          helper="$HOME/.terraform.d/plugins/terraform-credentials-registry"
           token=$("$helper" --host=registry.example.io get registry.example.io | jq -r .token)
           payload=$(cut -d. -f2 <<< "$token" | tr '_-' '/+')
           while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
