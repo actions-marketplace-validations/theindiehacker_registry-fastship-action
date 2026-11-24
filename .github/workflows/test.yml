@@ -94,6 +94,54 @@ jobs:
       - name: "tests/uv_test.sh"
         run: bash tests/uv_test.sh
 
+  uv-real:
+    name: "ID トークンで、本物の registry から uv add できる"
+    # fork からの PR では ID トークンを取得できないため動かさない
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write  # uv の Action が取得する ID トークン
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "uv を入れる"
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: false
+
+      # self-repository の形 ($/) は、actionlint・ghalint がまだ読めないため、./ にする
+      - name: "registry の資格情報を uv に渡す"
+        uses: ./uv
+        with:
+          host: registry.theindiehacker.io
+
+      # registry.theindiehacker.io は、theindiehacker の組織のワークフローの ID トークンを受け付ける。
+      # hello-registry は、registry.theindiehacker.io のリポジトリが上げている見本のパッケージ
+      - name: "本物の registry から uv add して、import する"
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p uv-e2e && cd uv-e2e
+          uv init --bare --name uv-e2e --python 3.13
+          cat >> pyproject.toml <<'EOF'
+
+          [[tool.uv.index]]
+          name = "internal"
+          url = "https://registry.theindiehacker.io/python/simple/"
+          explicit = true
+
+          [tool.uv.sources]
+          hello-registry = { index = "internal" }
+          EOF
+          uv add hello-registry
+          test "$(uv run python -c 'import hello_registry; print(hello_registry.hello())')" = "hello"
+          grep -q 'registry.theindiehacker.io/python/' uv.lock
+          echo "OK: registry から hello-registry を入れて、import できた"
+
   upload-real:
     name: "本物の registry が、pull_request の ID トークンでは上げさせない (403)"
     # 上げられるイベント (push・workflow_dispatch・release) では本当に上がってしまうため、pull_request だけで動かす。
