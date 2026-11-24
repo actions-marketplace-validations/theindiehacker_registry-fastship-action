@@ -153,7 +153,7 @@ module "network" {
 
 ### Google Cloud (Artifact Registry)
 
-[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の bootstrap が作る Docker リポジトリ `apps` に push します。認証は WIF です。
+[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の bootstrap が作る Docker リポジトリ `dist` に push します。認証は WIF です。
 
 ```yaml
 # 呼び出し元のリポジトリの .github/workflows/publish.yml
@@ -206,12 +206,12 @@ jobs:
       file: docker/Dockerfile
       target: ${{ matrix.target }}
       cloud: aws
-      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
+      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/dist
       aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
 - **設定の値**: `repository` と `aws_role_arn` は、[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の AWS の bootstrap ([`infrastructure/aws/bootstrap`](https://github.com/theindiehacker/registry.theindiehacker.io/tree/main/infrastructure/aws/bootstrap)) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
-- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
+- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`dist/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
 - **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
 
