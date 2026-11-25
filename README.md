@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: theindiehacker/registry-fastship-action@<版または SHA>
+      - uses: theindiehacker/registry-action@<版または SHA>
         with:
           host: registry.example.io  # 必須
 
@@ -49,7 +49,7 @@ module "rdb" {
 
 ## 🔧 helper の動き
 
-Terraform は `terraform-credentials-fastship --host=<host> get <ホスト>` を実行します。
+Terraform は `terraform-credentials-registry --host=<host> get <ホスト>` を実行します。
 
 - `<host>` のときだけ、GitHub Actions の ID トークン (audience は `https://<host>/v2`) を返します。ほかのホスト (`registry.terraform.io` など) には `{}` を返し、トークンを渡しません。
 - トークンは保管しません (`terraform login` には対応していません)。
@@ -104,7 +104,7 @@ jobs:
     permissions:
       contents: read
       id-token: write  # registry に送る ID トークン
-    uses: theindiehacker/registry-fastship-action/.github/workflows/upload.yml@<版または SHA>
+    uses: theindiehacker/registry-action/.github/workflows/upload.yml@<版または SHA>
     with:
       host: registry.example.io  # 必須
       namespace: ${{ inputs.namespace }}
@@ -153,7 +153,7 @@ module "network" {
 
 ### Google Cloud (Artifact Registry)
 
-[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の bootstrap が作る Docker リポジトリ `apps` に push します。認証は WIF です。
+[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の bootstrap が作る Docker リポジトリ `dist` に push します。認証は WIF です。
 
 ```yaml
 # 呼び出し元のリポジトリの .github/workflows/publish.yml
@@ -182,7 +182,7 @@ jobs:
     permissions:
       contents: read
       id-token: write  # WIF に要る
-    uses: theindiehacker/registry-fastship-action/.github/workflows/publish.yml@<タグ>  # SHA では借りられない (下の注意)
+    uses: theindiehacker/registry-action/.github/workflows/publish.yml@<タグ>  # SHA では借りられない (下の注意)
     with:
       image: ${{ matrix.image }}
       version: ${{ inputs.version }}
@@ -206,12 +206,12 @@ jobs:
       file: docker/Dockerfile
       target: ${{ matrix.target }}
       cloud: aws
-      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/apps
+      repository: ${{ vars.IMAGE_REPOSITORY_PREFIX }}  # <アカウント>.dkr.ecr.<リージョン>.amazonaws.com/dist
       aws_role_arn: ${{ vars.IMAGE_ROLE_ARN }}  # arn:aws:iam::<アカウント>:role/registry-image
 ```
 
 - **設定の値**: `repository` と `aws_role_arn` は、[registry](https://github.com/theindiehacker/registry.theindiehacker.io) の AWS の bootstrap ([`infrastructure/aws/bootstrap`](https://github.com/theindiehacker/registry.theindiehacker.io/tree/main/infrastructure/aws/bootstrap)) の出力 `image_publish` (`REPOSITORY_PREFIX`・`ROLE_ARN`) です。組織の Actions の変数に入れておきます。リージョンは `repository` のホストから読みます。
-- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`apps/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
+- **ECR のリポジトリは先に作る**: イメージは `<repository>/<image>` (`dist/api` など) で、ECR のリポジトリの名前と同じです。リポジトリは bootstrap が変数 `app_images` に書いた名前ごとに作ります (タグは付け替えられません)。push のロールはリポジトリを作れないため、新しいイメージは、`app_images` に足して bootstrap を apply してから publish します。無いときは、ビルドする前に、そう案内して失敗します。
 - **push できるジョブ**: IAM ロールを借りられるのは、組織のリポジトリの、デフォルトブランチかタグから、この workflow を `@refs/heads/main` か `@refs/tags/*` で使ったジョブだけです (ID トークンの `repository_owner_id`・`sub`・`job_workflow_ref`、audience は `sts.amazonaws.com`)。ほかのブランチ・pull request・Environment を使うジョブや、SHA で指定したときは、認証で断られます。
 - **認証情報**: 借りた認証情報は、ECR にログインする step にだけ渡し、ビルドの環境変数には残しません。
 
@@ -280,7 +280,7 @@ jobs:
       - uses: astral-sh/setup-uv@<版または SHA>
       - run: uv build
 
-      - uses: theindiehacker/registry-fastship-action/uv@<版または SHA>
+      - uses: theindiehacker/registry-action/uv@<版または SHA>
         with:
           host: registry.example.io  # 必須
 
@@ -302,19 +302,21 @@ jobs:
 
 ## 💻 PC から helper を消す
 
-PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `fastship.tfrc` を消してください。
+PC では `terraform login <host>` を使います。helper を入れた PC では、Terraform が login のトークンを helper に渡そうとして失敗するため、先に helper と `registry.tfrc` を消してください。
 
 ```bash
 # macOS・Linux
-rm -f ~/.terraform.d/plugins/terraform-credentials-fastship ~/.terraform.d/fastship.tfrc
+rm -f ~/.terraform.d/plugins/terraform-credentials-registry ~/.terraform.d/registry.tfrc
 ```
 
 ```powershell
 # Windows
-Remove-Item -ErrorAction SilentlyContinue "$env:APPDATA\terraform.d\plugins\terraform-credentials-fastship.exe", "$env:APPDATA\terraform.d\fastship.tfrc"
+Remove-Item -ErrorAction SilentlyContinue "$env:APPDATA\terraform.d\plugins\terraform-credentials-registry.exe", "$env:APPDATA\terraform.d\registry.tfrc"
 ```
 
-`TF_CLI_CONFIG_FILE` や `~/.terraformrc` (Windows は `%APPDATA%\terraform.rc`) に `credentials_helper "fastship"` を書いたときは、その行も消してください。そのあと `terraform login <host>` を実行します。
+`TF_CLI_CONFIG_FILE` や `~/.terraformrc` (Windows は `%APPDATA%\terraform.rc`) に `credentials_helper "registry"` を書いたときは、その行も消してください。そのあと `terraform login <host>` を実行します。
+
+v4 までの helper は、名前が `terraform-credentials-fastship`・`fastship.tfrc`・`credentials_helper "fastship"` でした。v4 までを入れた PC やセルフホストのランナーでは、古い名前のファイルと行も消してください (残っていると、`credentials_helper` が 2 つになり、Terraform が CLI 設定を読めません)。GitHub がホストするランナーは job ごとに新しいので、何もいりません。
 
 ## 🛠️ 開発
 

@@ -94,6 +94,54 @@ jobs:
       - name: "tests/uv_test.sh"
         run: bash tests/uv_test.sh
 
+  uv-real:
+    name: "ID トークンで、本物の registry から uv add できる"
+    # fork からの PR では ID トークンを取得できないため動かさない
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write  # uv の Action が取得する ID トークン
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "uv を入れる"
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d  # v10.4.0
+        with:
+          enable-cache: false
+
+      # self-repository の形 ($/) は、actionlint・ghalint がまだ読めないため、./ にする
+      - name: "registry の資格情報を uv に渡す"
+        uses: ./uv
+        with:
+          host: registry.theindiehacker.io
+
+      # registry.theindiehacker.io は、theindiehacker の組織のワークフローの ID トークンを受け付ける。
+      # hello-registry は、registry.theindiehacker.io のリポジトリが上げている見本のパッケージ
+      - name: "本物の registry から uv add して、import する"
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p uv-e2e && cd uv-e2e
+          uv init --bare --name uv-e2e --python 3.13
+          cat >> pyproject.toml <<'EOF'
+
+          [[tool.uv.index]]
+          name = "internal"
+          url = "https://registry.theindiehacker.io/python/simple/"
+          explicit = true
+
+          [tool.uv.sources]
+          hello-registry = { index = "internal" }
+          EOF
+          uv add hello-registry
+          test "$(uv run python -c 'import hello_registry; print(hello_registry.hello())')" = "hello"
+          grep -q 'registry.theindiehacker.io/python/' uv.lock
+          echo "OK: registry から hello-registry を入れて、import できた"
+
   upload-real:
     name: "本物の registry が、pull_request の ID トークンでは上げさせない (403)"
     # 上げられるイベント (push・workflow_dispatch・release) では本当に上がってしまうため、pull_request だけで動かす。
@@ -185,9 +233,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            helper="$(cygpath -u "$APPDATA")/terraform.d/plugins/terraform-credentials-fastship.exe"
+            helper="$(cygpath -u "$APPDATA")/terraform.d/plugins/terraform-credentials-registry.exe"
           else
-            helper="$HOME/.terraform.d/plugins/terraform-credentials-fastship"
+            helper="$HOME/.terraform.d/plugins/terraform-credentials-registry"
           fi
           token=$("$helper" --host=registry.theindiehacker.io get registry.theindiehacker.io | jq -r .token)
           payload=$(cut -d. -f2 <<< "$token" | tr '_-' '/+')
@@ -196,7 +244,7 @@ jobs:
           test "$(jq -r .aud <<< "$claims")" = "https://registry.theindiehacker.io/v2"
           test "$(jq -r .iss <<< "$claims")" = "https://token.actions.githubusercontent.com"
           echo "OK: aud と iss が正しい"
-          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.theindiehacker.io"] }' "$(dirname "$(dirname "$helper")")/fastship.tfrc"
+          grep -qxF 'credentials_helper "registry" { args = ["--host=registry.theindiehacker.io"] }' "$(dirname "$(dirname "$helper")")/registry.tfrc"
           echo "OK: CLI 設定に host が入っている"
 
           # --host が無いと、使い方のエラーになる
@@ -261,7 +309,7 @@ jobs:
         working-directory: ${{ runner.temp }}
         run: |
           grep -q 'plugin_cache_dir' "$TF_CLI_CONFIG_FILE"
-          grep -q 'credentials_helper "fastship"' "$TF_CLI_CONFIG_FILE"
+          grep -q 'credentials_helper "registry"' "$TF_CLI_CONFIG_FILE"
           mkdir -p e2e && cd e2e
           cat > main.tf <<'EOF'
           module "storage" {
@@ -299,7 +347,7 @@ jobs:
           OUTCOME: ${{ steps.invalid.outcome }}
         run: |
           test "$OUTCOME" = "failure"
-          test ! -e ~/.terraform.d/fastship.tfrc
+          test ! -e ~/.terraform.d/registry.tfrc
           echo "OK: 断った"
 
       - name: "credentials helper を入れる"
@@ -310,8 +358,8 @@ jobs:
       # トークンそのものは出さず、audience と発行元だけを確かめる
       - name: "helper が指定したホストの ID トークンだけを返す"
         run: |
-          grep -qxF 'credentials_helper "fastship" { args = ["--host=registry.example.io"] }' ~/.terraform.d/fastship.tfrc
-          helper="$HOME/.terraform.d/plugins/terraform-credentials-fastship"
+          grep -qxF 'credentials_helper "registry" { args = ["--host=registry.example.io"] }' ~/.terraform.d/registry.tfrc
+          helper="$HOME/.terraform.d/plugins/terraform-credentials-registry"
           token=$("$helper" --host=registry.example.io get registry.example.io | jq -r .token)
           payload=$(cut -d. -f2 <<< "$token" | tr '_-' '/+')
           while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done

@@ -67,15 +67,15 @@ jobs:
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
             os=${target%/*} arch=${target#*/} ext=""
             [ "$os" = windows ] && ext=.exe
-            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/terraform-credentials-fastship_${os}_${arch}${ext}" .
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags="-s -w" -o "dist/terraform-credentials-registry_${os}_${arch}${ext}" .
           done
-          (cd dist && sha256sum terraform-credentials-fastship_* > SHA256SUMS)
+          (cd dist && sha256sum terraform-credentials-registry_* > SHA256SUMS)
           cat dist/SHA256SUMS
 
       - name: "build provenance を付ける"
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
-          subject-path: dist/terraform-credentials-fastship_*
+          subject-path: dist/terraform-credentials-registry_*
 
       # --target のコミット (ビルドしたもの) にタグを付け、Release をバイナリ付きで一度に作る
       - name: "タグと Release を作る"
